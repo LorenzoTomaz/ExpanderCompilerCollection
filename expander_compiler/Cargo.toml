@@ -21,20 +21,32 @@ gkr.workspace = true
 arith.workspace = true
 gf2.workspace = true
 mersenne31.workspace = true
-
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+num-bigint = "0.4"
+halo2_proofs.workspace = true
+itertools = "0.13.0"
+maybe-rayon = "0.1.1"
+thiserror = "1.0.64"
+tract-onnx = "0.21.7"
+smallvec = "1.13.2"
+tract-core = "0.21.7"
 [workspace]
 members = [
     "ec_go_lib"
 ]
 
 [workspace.dependencies]
+halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", rev = "b753a832e92d5c86c5c997327a9cf9de86a18851", features = [
+    "derive_serde"
+] }
+halo2_proofs = { git = "https://github.com/zkonduit/halo2?branch=ac/cache-lookup-commitments#8b13a0d2a7a34d8daab010dadb2c47dfa47d37d0", package = "halo2_proofs", branch = "ac/cache-lookup-commitments" }
+itertools = { version = "0.13.0", default_features = false }
 rand = "0.8.5"
 chrono = "0.4"
 ethnum = "1.5.0"
 tiny-keccak = { version = "2.0", features = ["keccak"] }
-halo2curves = { git = "https://github.com/PolyhedraZK/halo2curves", default-features = false, features = [
-    "bits",
-] }
+
 arith = { git = "https://github.com/PolyhedraZK/Expander", branch = "nightly" }
 expander_config = { git = "https://github.com/PolyhedraZK/Expander", branch = "nightly", package = "config" }
 expander_circuit = { git = "https://github.com/PolyhedraZK/Expander", branch = "nightly", package = "circuit" }
@@ -42,3 +54,8 @@ gkr = { git = "https://github.com/PolyhedraZK/Expander", branch = "nightly" }
 gf2 = { git = "https://github.com/PolyhedraZK/Expander", branch = "nightly" }
 mersenne31 = { git = "https://github.com/PolyhedraZK/Expander", branch = "nightly" }
 expander_transcript = { git = "https://github.com/PolyhedraZK/Expander", branch = "nightly" , package = "transcript" }
+maybe-rayon = { version = "0.1.1", default_features = false }
+
+
+[[bin]]
+name = 'tract_addition'

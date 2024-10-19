@@ -15,6 +15,9 @@ macro_rules! declare_circuit_field_type {
     (@type $other:ty) => {
         $other
     };
+    (@type Vec<Variable>) => {
+        Vec<T>
+    };
 }
 
 #[macro_export]

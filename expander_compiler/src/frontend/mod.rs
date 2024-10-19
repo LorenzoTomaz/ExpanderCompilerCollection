@@ -2,7 +2,7 @@ use builder::RootBuilder;
 
 use crate::circuit::{ir, layered};
 
-mod api;
+pub mod api;
 mod builder;
 mod circuit;
 mod variables;

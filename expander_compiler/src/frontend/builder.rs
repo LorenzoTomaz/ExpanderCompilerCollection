@@ -33,6 +33,15 @@ pub struct Variable {
     id: usize,
 }
 
+impl Variable {
+    pub fn zero() -> Self {
+        Variable { id: 0 }
+    }
+    pub fn one() -> Self {
+        Variable { id: 1 }
+    }
+}
+
 pub enum VariableOrValue<F: Field> {
     Variable(Variable),
     Value(F),
