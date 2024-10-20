@@ -1304,6 +1304,7 @@ impl Tensor<Variable> {
         let lhs = self.expand(&broadcasted_shape).unwrap();
         let rhs = rhs.expand(&broadcasted_shape).unwrap();
         let res = {
+            // @TODO: parallelize with par_iter - must add the trait `Sync` for config::Config>::CircuitField
             let mut res: Tensor<Variable> = lhs
                 .iter()
                 .zip(rhs)

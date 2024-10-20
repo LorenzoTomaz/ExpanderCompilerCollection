@@ -787,6 +787,7 @@ dependencies = [
  "thiserror",
  "tiny-keccak",
  "tract-core",
+ "tract-hir",
  "tract-onnx",
 ]
 
