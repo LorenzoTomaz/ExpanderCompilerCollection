@@ -783,6 +783,7 @@ dependencies = [
  "rand",
  "serde",
  "serde_json",
+ "sha2",
  "smallvec",
  "thiserror",
  "tiny-keccak",

@@ -1,24 +1,25 @@
 use std::collections::HashMap;
 use tract_onnx::prelude::*;
 type TractResult = (Graph<TypedFact, Box<dyn TypedOp>>, SymbolValues);
-use expander_compiler::expander_runner::executor;
-use expander_compiler::fieldutils;
-use expander_compiler::frontend::internal::Serde;
+use expander_compiler::fieldutils::{self, IntegerRep};
 use expander_compiler::frontend::*;
-use expander_compiler::tensor::{Tensor as FPTensor, TensorError};
+use expander_compiler::tensor::{Tensor as FPTensor, TensorError, TensorType};
 use expander_compiler::Scale;
+use halo2curves::bn256::Fr;
+use halo2curves::ff::PrimeField;
 use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
 use thiserror::Error;
 #[cfg(not(target_arch = "wasm32"))]
-use tract_onnx::tract_hir::internal::DimLike;
-
-fn get_shape(shape: &ShapeFact) -> Vec<usize> {
-    let dims: Vec<usize> = shape
-        .iter()
-        .map(|dim| dim.to_usize().unwrap()) // Format each dimension
-        .collect();
-    dims
-}
+use tract_onnx::tract_hir::{
+    internal::DimLike,
+    ops::array::{Pad, PadMode, TypedConcat},
+    ops::cnn::PoolSpec,
+    ops::konst::Const,
+    ops::nn::DataFormat,
+    tract_core::ops::cast::Cast,
+    tract_core::ops::cnn::{conv::KernelFormat, MaxPool, SumPool},
+};
 
 /// An enum representing the operations that can be expressed as arithmetic (non lookup) operations.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -53,6 +54,21 @@ impl PolyOp {
     }
 }
 
+fn source_c(node: CircuitNode, input: &[Variable]) -> Result<FPTensor<Variable>, TensorError> {
+    let source = FPTensor::<Variable>::new(Some(input), &node.shape).unwrap();
+    Ok(source)
+}
+
+impl Input {
+    pub fn layout(
+        &self,
+    ) -> fn(CircuitNode, &[Variable]) -> Result<FPTensor<Variable>, TensorError> {
+        match self {
+            Input::Source => source_c,
+        }
+    }
+}
+
 pub struct TensorNode {
     pub op: String,
     pub input_ids: Vec<usize>,
@@ -62,7 +78,7 @@ pub struct TensorNode {
 fn process_graph(
     graph: CircuitGraph,
     builder: &mut API<BN254Config>,
-    circuit_input: &Vec<Vec<Variable>>,
+    circuit_input: &[[Variable; 1]; 2],
 ) -> FPTensor<Variable> {
     // a hashmap to store the nodes
     let mut nodes_ops: HashMap<usize, TensorNode> = HashMap::new();
@@ -74,14 +90,14 @@ fn process_graph(
         match node.name.as_ref() {
             "Add" => {
                 for x in node.inputs.iter() {
-                    let a = x.node;
+                    let a = x.0.node;
                     print!("Input: {:?}", a);
                     nodes_ops.get(&a).unwrap();
                 }
                 let inputs: Vec<FPTensor<Variable>> = node
                     .inputs
                     .iter()
-                    .map(|id| {
+                    .map(|(id, _)| {
                         print!("Input: {:?}", id.node);
                         let tensor = nodes_ops.get(&id.node).unwrap();
                         tensor.output.clone()
@@ -92,7 +108,7 @@ fn process_graph(
                 let result = layout(&inputs, builder).unwrap();
                 let tensor_node = TensorNode {
                     op: node.name.clone(),
-                    input_ids: node.inputs.iter().map(|id| id.node).collect(),
+                    input_ids: node.inputs.iter().map(|(id, _)| id.node).collect(),
                     output: result,
                 };
                 nodes_ops.insert(**idx, tensor_node);
@@ -119,6 +135,7 @@ fn process_graph(
             }
         }
     }
+    graph.display_graph();
     // get last idx of node_ops
     let last_idx = sorted_nodes.last().unwrap().0;
     let last_node = nodes_ops.get(&last_idx).unwrap();
@@ -133,7 +150,7 @@ declare_circuit!(Circuit {
 impl Define<BN254Config> for Circuit<Variable> {
     fn define(&self, builder: &mut API<BN254Config>) {
         let model =
-            load_onnx_using_tract(&mut std::fs::File::open("./tests/2_addition.onnx").unwrap())
+            load_onnx_using_tract(&mut std::fs::File::open("./tests/addition.onnx").unwrap())
                 .unwrap()
                 .0;
         // Initialize the graph to store nodes
@@ -149,34 +166,35 @@ impl Define<BN254Config> for Circuit<Variable> {
             let node_name = node.op.name();
 
             // Format the inputs and also store the input index
-            let node_inputs: Vec<OutletId> = node
+            let node_inputs: Vec<(OutletId, String)> = node
                 .inputs
                 .iter()
-                .map(|input| *input) // Store index and fact
+                .map(|input| (*input, format_fact(model.outlet_fact(*input).unwrap()))) // Store index and fact
                 .collect();
 
             // Format the outputs by using their index (OutletId) and extracting the outlet fact
-            let node_outputs: Vec<Outlet<TypedFact>> = node
+            let node_outputs: Vec<(Outlet<TypedFact>, String)> = node
                 .outputs
                 .iter()
-                .map(|output_id| output_id.clone()) // Store index and outlet fact
+                .map(|output_id| (output_id.clone(), format_outlet(output_id))) // Store index and outlet fact
                 .collect();
 
-            let node_shape = get_shape(&node.outputs[0].fact.shape);
+            let node_datum = new_op_from_onnx(node, i).unwrap();
+            let n = node_datum.clone();
+            let node_shape = n.dims();
             // Create the Node struct and add it to the graph
             let graph_node = CircuitNode {
                 name: node_name.to_string(),
                 inputs: node_inputs,
                 outputs: node_outputs,
-                shape: node_shape,
+                node_datum: node_datum,
+                shape: node_shape.to_vec(),
             };
 
             // Add the node to the graph
             graph.add_node(i, graph_node);
         }
-        graph.display_graph();
-        let inputs: Vec<Vec<Variable>> = self.x.iter().map(|x| x.to_vec()).collect();
-        let output_node = process_graph(graph, builder, &inputs);
+        let output_node = process_graph(graph, builder, &self.x);
         let first_obj = output_node.clone();
         let f = first_obj[0].clone();
         builder.assert_is_equal(f, self.sum);
@@ -241,7 +259,7 @@ pub fn quantize_tensor(
     const_value: FPTensor<f32>,
     scale: crate::Scale,
 ) -> Result<FPTensor<fieldutils::IntegerRep>, TensorError> {
-    let value: FPTensor<fieldutils::IntegerRep> = const_value.par_enum_map(|_, x| {
+    let mut value: FPTensor<fieldutils::IntegerRep> = const_value.par_enum_map(|_, x| {
         Ok::<_, TensorError>(
             quantize_float(&(x).into(), 0.0, scale).unwrap() as fieldutils::IntegerRep
         )
@@ -252,12 +270,31 @@ pub fn quantize_tensor(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn load_op<C: tract_onnx::prelude::Op + Clone>(
+    op: &dyn tract_onnx::prelude::Op,
+    idx: usize,
+    name: String,
+) -> Result<C, GraphError> {
+    // Extract the slope layer hyperparams
+    let op: &C = match op.downcast_ref::<C>() {
+        Some(b) => b,
+        None => {
+            return Err(GraphError::OpMismatch(idx, name));
+        }
+    };
+
+    Ok(op.clone())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 use tract_onnx::prelude::SymbolValues;
 #[cfg(not(target_arch = "wasm32"))]
 /// Extracts the raw values from a tensor.
 pub fn extract_tensor_value(
     input: Arc<tract_onnx::prelude::Tensor>,
 ) -> Result<FPTensor<f32>, GraphError> {
+    use maybe_rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+
     let dt = input.datum_type();
     let dims = input.shape().to_vec();
 
@@ -360,6 +397,58 @@ pub fn extract_tensor_value(
     Ok(const_value)
 }
 
+fn new_op_from_onnx(
+    node: &Node<TypedFact, Box<dyn TypedOp>>,
+    idx: usize,
+) -> Result<FPTensor<fieldutils::IntegerRep>, GraphError> {
+    match node.op().name().as_ref() {
+        "Const" => {
+            let op: Const = load_op::<Const>(node.op(), idx, node.op().name().to_string())?;
+            let dt = op.0.datum_type();
+            // Raw values are always f32
+            let raw_value = extract_tensor_value(op.0)?;
+            // If bool or a tensor dimension then don't scale
+            let mut constant_scale = match dt {
+                DatumType::Bool
+                | DatumType::TDim
+                | DatumType::I64
+                | DatumType::I32
+                | DatumType::I16
+                | DatumType::I8
+                | DatumType::U8
+                | DatumType::U16
+                | DatumType::U32
+                | DatumType::U64 => 0,
+                DatumType::F16 | DatumType::F32 | DatumType::F64 => 10,
+                _ => {
+                    return Err(GraphError::UnsupportedDataType(idx, format!("{:?}", dt)));
+                }
+            };
+            let quantized_value = quantize_tensor(raw_value.clone(), constant_scale)?;
+            // Quantize the raw value
+            // let quantized_value = quantize_tensor(raw_value.clone(), constant_scale)?;
+            Ok(quantized_value)
+        }
+        "Source" => {
+            let quantized_value = FPTensor::<IntegerRep>::new(None, &[1])?;
+            Ok(quantized_value)
+        }
+        "EinSum" => {
+            let quantized_value = FPTensor::<IntegerRep>::new(None, &[1])?;
+            Ok(quantized_value)
+        }
+        "Add" => {
+            let quantized_value = FPTensor::<IntegerRep>::new(None, &[1])?;
+            Ok(quantized_value)
+        }
+        "Max" => {
+            let quantized_value = FPTensor::<IntegerRep>::new(None, &[1])?;
+            Ok(quantized_value)
+        }
+        _ => Err(GraphError::OpMismatch(idx, node.op().name().to_string())),
+    }
+}
+
 fn load_onnx_using_tract(reader: &mut dyn std::io::Read) -> Result<TractResult, TractError> {
     use std::collections::HashMap;
     use tract_onnx::tract_hir::internal::GenericFactoid;
@@ -409,8 +498,9 @@ fn load_onnx_using_tract(reader: &mut dyn std::io::Read) -> Result<TractResult, 
 #[derive(Debug)]
 struct CircuitNode {
     name: String,
-    inputs: Vec<OutletId>,           // Store both index and input information
-    outputs: Vec<Outlet<TypedFact>>, // Store both index and output information
+    inputs: Vec<(OutletId, String)>, // Store both index and input information
+    outputs: Vec<(Outlet<TypedFact>, String)>, // Store both index and output information
+    node_datum: FPTensor<fieldutils::IntegerRep>,
     shape: Vec<usize>,
 }
 
@@ -440,46 +530,123 @@ impl CircuitGraph {
             println!("Node {}: {}", index, node.name);
             println!(
                 "  Inputs: {:?}",
-                node.inputs.iter().map(|id| (id.node)).collect::<Vec<_>>()
+                node.inputs
+                    .iter()
+                    .map(|(id, info)| (id.node))
+                    .collect::<Vec<_>>()
             );
-            println!("  Outputs: {:?}", node.outputs[0].fact.konst);
+            println!("  Outputs: {:?}", node.outputs[0].0.fact.konst);
             // check if node.outputs[0].0.fact.konst is not None
             println!("  Tensor shape: {:?}", node.shape);
-            let konst = node.outputs[0].fact.konst.clone();
+            let konst = node.outputs[0].0.fact.konst.clone();
             if konst.is_some() {
                 print!(
                     "Tensor {:?}",
                     quantize_tensor(
-                        extract_tensor_value(node.outputs[0].fact.konst.clone().unwrap()).unwrap(),
+                        extract_tensor_value(node.outputs[0].0.fact.konst.clone().unwrap())
+                            .unwrap(),
                         10
                     )
                     .unwrap()
                 );
             }
+            //new_op_from_onnx(node.outputs[0].0, *index);
         }
     }
 }
 
+// Function to format the TypedFact
+fn format_fact(fact: &TypedFact) -> String {
+    let data_type = fact.datum_type;
+    let shape = format_shape(&fact.shape);
+    format!("Type: {:?}, Shape: {:?}", data_type, shape)
+}
+
+// Function to format the ShapeFact by iterating over dimensions
+fn format_shape(shape: &ShapeFact) -> String {
+    let dims: Vec<String> = shape
+        .iter()
+        .map(|dim| format!("{}", dim)) // Format each dimension
+        .collect();
+    format!("[{}]", dims.join(", "))
+}
+
+fn get_shape(shape: &ShapeFact) -> Vec<i32> {
+    let dims: Vec<i32> = shape
+        .iter()
+        .map(|dim| dim.to_i32().unwrap()) // Format each dimension
+        .collect();
+    dims
+}
+
+// New function to handle Outlet<TypedFact>
+fn format_outlet(outlet: &Outlet<TypedFact>) -> String {
+    let fact_info = format_fact(&outlet.fact); // Reuse the format_fact function
+    format!("Outlet - {}", fact_info)
+}
+
 fn main() -> () {
+    // // // Load and optimize the ONNX model
+    // // let model = tract_onnx::onnx()
+    // //     .model_for_path("./tests/iris_model.onnx")
+    // //     .unwrap();
+    // let model = load_onnx_using_tract(&mut std::fs::File::open("./tests/2_addition.onnx").unwrap())
+    //     .unwrap()
+    //     .0;
+    // // Initialize the graph to store nodes
+    // let mut graph = CircuitGraph::new();
+    // let a = model.nodes.clone();
+    // // Extract the nodes from the model
+    // let nodes = model.nodes.clone();
+
+    // println!("Model nodes:");
+
+    // // Iterate over each node and capture its inputs, outputs, and types
+    // for (i, node) in nodes.iter().enumerate() {
+    //     // Get the name of the node
+    //     let node_name = node.op.name();
+
+    //     // Format the inputs and also store the input index
+    //     let node_inputs: Vec<(OutletId, String)> = node
+    //         .inputs
+    //         .iter()
+    //         .map(|input| (*input, format_fact(model.outlet_fact(*input).unwrap()))) // Store index and fact
+    //         .collect();
+
+    //     // Format the outputs by using their index (OutletId) and extracting the outlet fact
+    //     let node_outputs: Vec<(Outlet<TypedFact>, String)> = node
+    //         .outputs
+    //         .iter()
+    //         .map(|output_id| (output_id.clone(), format_outlet(output_id))) // Store index and outlet fact
+    //         .collect();
+
+    //     let node_datum = new_op_from_onnx(node, i).unwrap();
+    //     let n = node_datum.clone();
+    //     let node_shape = n.dims();
+    //     // Create the Node struct and add it to the graph
+    //     let graph_node = CircuitNode {
+    //         name: node_name.to_string(),
+    //         inputs: node_inputs,
+    //         outputs: node_outputs,
+    //         node_datum: node_datum,
+    //         shape: node_shape.to_vec(),
+    //     };
+
+    //     // Add the node to the graph
+    //     graph.add_node(i, graph_node);
+    // }
+
+    // // Display the full graph with input/output types and shapes
+    // graph.display_graph();
     let compile_result = compile(&Circuit::default()).unwrap();
-    let CompileResult {
-        witness_solver,
-        layered_circuit,
-    } = compile_result;
     let assignment = Circuit::<BN254> {
-        sum: BN254::from(4u64),
+        sum: BN254::from(3u64),
         x: [[BN254::from(1u64)], [BN254::from(2u64)]],
     };
-    let witness = witness_solver.solve_witness(&assignment).unwrap();
-    let output = layered_circuit.run(&witness);
+    let witness = compile_result
+        .witness_solver
+        .solve_witness(&assignment)
+        .unwrap();
+    let output = compile_result.layered_circuit.run(&witness);
     assert_eq!(output, vec![true]);
-    let file = std::fs::File::create("circuit.txt").unwrap();
-    let writer = std::io::BufWriter::new(file);
-    layered_circuit.serialize_into(writer).unwrap();
-
-    let file = std::fs::File::create("witness.txt").unwrap();
-    let writer = std::io::BufWriter::new(file);
-    witness.serialize_into(writer).unwrap();
-    println!("dumped to files");
-    executor();
 }
