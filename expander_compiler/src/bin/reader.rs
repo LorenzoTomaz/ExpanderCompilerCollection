@@ -170,7 +170,6 @@ impl Define<BN254Config> for Circuit<Variable> {
                 outputs: node_outputs,
                 shape: node_shape,
             };
-
             // Add the node to the graph
             graph.add_node(i, graph_node);
         }
@@ -461,7 +460,10 @@ impl CircuitGraph {
 }
 
 fn main() -> () {
+    // count time
+    let mut start = std::time::Instant::now();
     let compile_result = compile(&Circuit::default()).unwrap();
+    println!("Time to compile: {:?}", start.elapsed());
     let CompileResult {
         witness_solver,
         layered_circuit,
@@ -481,5 +483,7 @@ fn main() -> () {
     let writer = std::io::BufWriter::new(file);
     witness.serialize_into(writer).unwrap();
     println!("dumped to files");
+    start = std::time::Instant::now();
     executor();
+    println!("Time to execute: {:?}", start.elapsed());
 }
