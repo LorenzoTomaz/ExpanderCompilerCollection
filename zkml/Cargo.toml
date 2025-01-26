@@ -3,6 +3,9 @@ name = "zkml"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "zkml"
+crate-type = ["cdylib"]
 
 [dependencies]
 expander_compiler = { path = "../expander_compiler"}
@@ -17,3 +20,4 @@ gf2.workspace = true
 mersenne31.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+pyo3 = { version = "0.19", features = ["extension-module"] }

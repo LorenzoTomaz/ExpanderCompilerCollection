@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "setuptools-rust>=1.5.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zkml"
+version = "0.1.0"
+description = "Python bindings for ZKML library"
+requires-python = ">=3.7"
+dependencies = []
+
+[tool.setuptools.packages]
+find = {}
+
+[tool.setuptools.package-data]
+"*" = ["*.so", "*.dylib", "*.dll"] 

@@ -32,86 +32,45 @@ pub fn verify_matmul<C: Config>(
     b_shape: &[u64],
     c_shape: &[u64],
     num_iterations: usize,
-) {
-    // Verify matrix dimensions match
-    assert_eq!(a_shape.len(), 2, "Matrix A must be 2-dimensional");
-    assert_eq!(b_shape.len(), 2, "Matrix B must be 2-dimensional");
-    assert_eq!(c_shape.len(), 2, "Matrix C must be 2-dimensional");
+) -> Variable {
+    assert_eq!(a_shape.len(), 2, "Matrix A must be 2D");
+    assert_eq!(b_shape.len(), 2, "Matrix B must be 2D");
+    assert_eq!(c_shape.len(), 2, "Matrix C must be 2D");
+    assert_eq!(a_shape[1], b_shape[0], "Matrix dimensions must match");
+    assert_eq!(a_shape[0], c_shape[0], "Output rows must match A");
+    assert_eq!(b_shape[1], c_shape[1], "Output cols must match B");
 
-    let (m, n) = (a_shape[0] as usize, a_shape[1] as usize);
-    let (n2, p) = (b_shape[0] as usize, b_shape[1] as usize);
-    let (m2, p2) = (c_shape[0] as usize, c_shape[1] as usize);
+    let m = a_shape[0] as usize;
+    let n = a_shape[1] as usize;
+    let p = b_shape[1] as usize;
 
-    assert_eq!(n, n2, "Inner dimensions must match");
-    assert_eq!(m, m2, "Output dimensions must match");
-    assert_eq!(p, p2, "Output dimensions must match");
+    // Initialize result as true and create constants
+    let mut result = builder.constant(C::CircuitField::from(1u32));
+    let one_const = builder.constant(C::CircuitField::from(ONE as u32));
+    let checked = false;
 
-    // Verify data lengths match shapes
-    assert_eq!(a.len(), m * n, "Matrix A data length must match shape");
-    assert_eq!(b.len(), n * p, "Matrix B data length must match shape");
-    assert_eq!(c.len(), m * p, "Matrix C data length must match shape");
-
-    let mut rng = rand::thread_rng();
-    let one = builder.constant(C::CircuitField::from(ONE));
-    let denominator = builder.constant(C::CircuitField::from(ONE));
-
-    // For each iteration
-    for _ in 0..num_iterations {
-        // Generate random vector x from {0,1}^p
-        let mut x = Vec::with_capacity(p);
-        for _ in 0..p {
-            // Generate random binary value using Rust's RNG
-            let random_bit = if rng.gen::<bool>() {
-                one
-            } else {
-                builder.constant(C::CircuitField::ZERO)
-            };
-            x.push(random_bit);
-        }
-
-        // Compute Bx first (n-dimensional vector)
-        let mut bx = vec![builder.constant(C::CircuitField::ZERO); n];
-        for i in 0..n {
-            for j in 0..p {
-                let b_ij = b[i * p + j];
-                let prod = builder.mul(b_ij, x[j]);
-                // Scale down after multiplication
-                let scaled_prod = builder.div(prod, denominator, false);
-                bx[i] = builder.add(bx[i], scaled_prod);
+    // For each element in C
+    for i in 0..m {
+        for j in 0..p {
+            // Calculate c[i,j] = sum(a[i,k] * b[k,j])
+            let mut sum = builder.constant(C::CircuitField::ZERO);
+            for k in 0..n {
+                let a_ik = a[i * n + k];
+                let b_kj = b[k * p + j];
+                let prod = builder.mul(a_ik, b_kj);
+                // Divide by ONE to maintain fixed-point representation
+                let scaled_prod = builder.div(prod, one_const, checked);
+                sum = builder.add(sum, scaled_prod);
             }
-        }
 
-        // Compute ABx (m-dimensional vector)
-        let mut abx = vec![builder.constant(C::CircuitField::ZERO); m];
-        for i in 0..m {
-            for j in 0..n {
-                let a_ij = a[i * n + j];
-                let prod = builder.mul(a_ij, bx[j]);
-                // Scale down after multiplication
-                let scaled_prod = builder.div(prod, denominator, false);
-                abx[i] = builder.add(abx[i], scaled_prod);
-            }
-        }
-
-        // Compute Cx (m-dimensional vector)
-        let mut cx = vec![builder.constant(C::CircuitField::ZERO); m];
-        for i in 0..m {
-            for j in 0..p {
-                let c_ij = c[i * p + j];
-                let prod = builder.mul(c_ij, x[j]);
-                // Scale down after multiplication
-                let scaled_prod = builder.div(prod, denominator, false);
-                cx[i] = builder.add(cx[i], scaled_prod);
-            }
-        }
-
-        // Verify ABx = Cx
-        let zero = builder.constant(C::CircuitField::ZERO);
-        for i in 0..m {
-            let diff = builder.sub(abx[i], cx[i]);
-            builder.assert_is_equal(diff, zero);
+            // Verify c[i,j] matches the calculated sum
+            let c_ij = c[i * p + j];
+            let diff = builder.sub(c_ij, sum);
+            let eq = builder.is_zero(diff);
+            result = builder.and(result, eq);
         }
     }
+    result
 }
 
 #[cfg(test)]
@@ -130,7 +89,7 @@ mod tests {
 
         impl<C: Config> Define<C> for TestCircuit<Variable> {
             fn define(&self, builder: &mut API<C>) {
-                verify_matmul(
+                let result = verify_matmul(
                     builder,
                     &self.a,
                     &self.b,
@@ -140,6 +99,8 @@ mod tests {
                     &[2, 2], // C is 2x2
                     5,       // num_iterations
                 );
+                let true_const = builder.constant(C::CircuitField::from(1u32));
+                builder.assert_is_equal(result, true_const);
             }
         }
 

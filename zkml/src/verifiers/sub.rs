@@ -14,37 +14,29 @@ use expander_compiler::frontend::*;
 /// * `bool` - Whether the verification constraints were satisfied
 pub fn verify_tensor_sub<C: Config>(
     builder: &mut API<C>,
-    input1: &[Variable],
-    input2: &[Variable],
-    output: &[Variable],
+    a: &[Variable],
+    b: &[Variable],
+    c: &[Variable],
     shape: &[u64],
-) {
-    // Verify all tensors have same number of elements
-    let n_elements = input1.len();
-    assert_eq!(
-        input2.len(),
-        n_elements,
-        "Input tensors must have same length"
-    );
-    assert_eq!(
-        output.len(),
-        n_elements,
-        "Output tensor must have same length as inputs"
-    );
-    assert_eq!(
-        n_elements,
-        shape.iter().product::<u64>() as usize,
-        "Shape product must match tensor lengths"
-    );
+) -> Variable {
+    let size: usize = shape.iter().product::<u64>() as usize;
+    assert_eq!(a.len(), size, "Tensor A size must match shape");
+    assert_eq!(b.len(), size, "Tensor B size must match shape");
+    assert_eq!(c.len(), size, "Tensor C size must match shape");
 
-    // For each element, verify input1[i] - input2[i] = output[i]
-    // Which is equivalent to input1[i] - input2[i] - output[i] = 0
-    let zero = builder.constant(0);
-    for i in 0..n_elements {
-        let diff = builder.sub(input1[i], input2[i]);
-        let result = builder.sub(diff, output[i]);
-        builder.assert_is_equal(result, zero);
+    // Initialize result as true
+    let mut result = builder.constant(C::CircuitField::from(1));
+
+    // For each element
+    for i in 0..size {
+        let diff = builder.sub(a[i], b[i]);
+        let diff2 = builder.sub(c[i], diff);
+        let zero = builder.constant(C::CircuitField::ZERO);
+        let eq = builder.is_zero(diff2);
+        result = builder.and(result, eq);
     }
+
+    result
 }
 
 #[cfg(test)]
@@ -64,7 +56,10 @@ mod tests {
 
         impl<C: Config> Define<C> for TestCircuit<Variable> {
             fn define(&self, builder: &mut API<C>) {
-                verify_tensor_sub(builder, &self.input1, &self.input2, &self.output, &[2, 2]);
+                let result =
+                    verify_tensor_sub(builder, &self.input1, &self.input2, &self.output, &[2, 2]);
+                let true_const = builder.constant(C::CircuitField::from(1u32));
+                builder.assert_is_equal(result, true_const);
             }
         }
 

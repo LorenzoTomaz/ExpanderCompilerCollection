@@ -1,10 +1,21 @@
 use arith::Field;
+use arith::FieldSerde;
+use expander_compiler::circuit::layered::witness::Witness;
+use expander_compiler::circuit::layered::Circuit;
+use expander_compiler::field::BN254;
 use expander_compiler::frontend::internal::DumpLoadTwoVariables;
 use expander_compiler::frontend::Variable;
 use expander_compiler::frontend::*;
+use expander_compiler::frontend::{compile, BN254Config};
+use expander_config::{self, BN254ConfigKeccak};
+use gkr::{self, Prover, Verifier};
+use internal::Serde;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fs;
+use std::fs::File;
+use std::io::BufWriter;
 
 /// Trait for assigning values to circuit variables
 pub trait Assignment<F: Field, C> {
@@ -74,6 +85,9 @@ impl<C: Config> Define<C> for DagCircuit {
         let mut processed = HashMap::new();
         let mut to_process = vec![self.graph.output_node.clone()];
 
+        // Initialize result as true
+        let mut result = builder.constant(C::CircuitField::from(1u32));
+
         // Process nodes in reverse topological order
         while let Some(uuid) = to_process.pop() {
             if processed.contains_key(&uuid) {
@@ -100,9 +114,11 @@ impl<C: Config> Define<C> for DagCircuit {
             // Get tensor data
             let output_data = self.tensor_data.get(&uuid).unwrap();
 
-            match node.op_name.as_str() {
+            // Verify operation and combine result
+            let verifier_result = match node.op_name.as_str() {
                 "input" => {
                     // Input nodes don't need verification
+                    builder.constant(C::CircuitField::from(1u32))
                 }
                 "matmul" => {
                     assert_eq!(node.parents.len(), 2, "Matmul requires 2 inputs");
@@ -120,7 +136,7 @@ impl<C: Config> Define<C> for DagCircuit {
                         &b_node.shape,
                         &node.shape,
                         5, // Default number of iterations
-                    );
+                    )
                 }
                 "add" => {
                     assert_eq!(node.parents.len(), 2, "Add requires 2 inputs");
@@ -133,7 +149,7 @@ impl<C: Config> Define<C> for DagCircuit {
                         b_data,
                         output_data,
                         &node.shape,
-                    );
+                    )
                 }
                 "sub" => {
                     assert_eq!(node.parents.len(), 2, "Sub requires 2 inputs");
@@ -146,14 +162,20 @@ impl<C: Config> Define<C> for DagCircuit {
                         b_data,
                         output_data,
                         &node.shape,
-                    );
+                    )
                 }
                 // Add more operations as they are implemented
                 _ => panic!("Unsupported operation: {}", node.op_name),
-            }
+            };
 
+            // Combine with previous results
+            result = builder.and(result, verifier_result);
             processed.insert(uuid.clone(), true);
         }
+
+        // Assert final result
+        let true_const = builder.constant(C::CircuitField::from(1u32));
+        builder.assert_is_equal(result, true_const)
     }
 }
 
@@ -275,107 +297,107 @@ impl DumpLoadTwoVariables<Variable> for DagCircuit {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use expander_compiler::compile;
-    use expander_compiler::field::BN254;
-    use expander_compiler::frontend::BN254Config;
+/// Generate witness files for a DAG circuit
+pub fn generate_witness(
+    circuit: &DagCircuit,
+    assignment: &DagAssignment<BN254>,
+    circuit_path: &str,
+    witness_path: &str,
+    witness_solver_path: &str,
+    proof_path: &str,
+) -> bool {
+    let compile_result = compile::<BN254Config, DagCircuit>(circuit).unwrap();
+    let witness = compile_result
+        .witness_solver
+        .solve_witness(assignment)
+        .unwrap();
+    let output = compile_result.layered_circuit.run(&witness);
+    assert_eq!(output, vec![true]);
+    // Generate witness files
+    let file = File::create(circuit_path).unwrap();
+    let writer = BufWriter::new(file);
+    compile_result
+        .layered_circuit
+        .serialize_into(writer)
+        .unwrap();
 
-    const ONE: u32 = 1 << 16;
+    let file = File::create(witness_path).unwrap();
+    let writer = BufWriter::new(file);
+    witness.serialize_into(writer).unwrap();
 
-    #[test]
-    fn test_matmul_dag() {
-        // Create a simple DAG for matrix multiplication
-        let mut nodes = HashMap::new();
+    let file = File::create(witness_solver_path).unwrap();
+    let writer = BufWriter::new(file);
+    compile_result
+        .witness_solver
+        .serialize_into(writer)
+        .unwrap();
 
-        // Input matrices A and B
-        nodes.insert(
-            "a".to_string(),
-            TensorNode {
-                uuid: "a".to_string(),
-                shape: vec![2, 2],
-                op_name: "input".to_string(),
-                parents: vec![],
-                parameters: None,
-            },
-        );
-        nodes.insert(
-            "b".to_string(),
-            TensorNode {
-                uuid: "b".to_string(),
-                shape: vec![2, 2],
-                op_name: "input".to_string(),
-                parents: vec![],
-                parameters: None,
-            },
-        );
+    println!("Witness files generated successfully");
 
-        // Output matrix C = A * B
-        nodes.insert(
-            "c".to_string(),
-            TensorNode {
-                uuid: "c".to_string(),
-                shape: vec![2, 2],
-                op_name: "matmul".to_string(),
-                parents: vec!["a".to_string(), "b".to_string()],
-                parameters: None,
-            },
-        );
+    // Generate and verify proof
+    generate_and_verify_proof(&compile_result.layered_circuit, &witness, proof_path)
+}
 
-        let graph = ComputationGraph {
-            nodes,
-            output_node: "c".to_string(),
-        };
+/// Generate proof from existing witness files
+pub fn generate_proof_from_files(
+    circuit_path: &str,
+    witness_path: &str,
+    witness_solver_path: &str,
+    proof_path: &str,
+) -> bool {
+    // Load circuit and witness from files
+    let circuit_file = File::open(circuit_path).unwrap();
+    let witness_file = File::open(witness_path).unwrap();
+    let layered_circuit = Circuit::<BN254Config>::deserialize_from(circuit_file).unwrap();
+    let witness = Witness::<BN254Config>::deserialize_from(witness_file).unwrap();
 
-        let mut circuit = DagCircuit::new(graph);
+    // Generate and verify proof
+    generate_and_verify_proof(&layered_circuit, &witness, proof_path)
+}
 
-        // Initialize input tensors with variables
-        circuit.init_tensor("a");
-        circuit.init_tensor("b");
-        circuit.init_tensor("c");
+/// Generate and verify proof for a circuit
+pub fn generate_and_verify_proof(
+    layered_circuit: &Circuit<BN254Config>,
+    witness: &Witness<BN254Config>,
+    proof_path: &str,
+) -> bool {
+    // Generate expander proof
+    type GKRConfig = expander_config::BN254ConfigKeccak;
+    let mut expander_circuit = layered_circuit.export_to_expander::<GKRConfig>().flatten();
 
-        let compile_result = compile::<BN254Config, DagCircuit>(&circuit).unwrap();
+    let config = expander_config::Config::<GKRConfig>::new(
+        expander_config::GKRScheme::Vanilla,
+        expander_config::MPIConfig::new(),
+    );
 
-        // Test correct multiplication
-        let mut tensor_values = HashMap::new();
-        tensor_values.insert(
-            "a".to_string(),
-            vec![
-                BN254::from(1u32 * ONE),
-                BN254::from(2u32 * ONE),
-                BN254::from(3u32 * ONE),
-                BN254::from(4u32 * ONE),
-            ],
-        );
-        tensor_values.insert(
-            "b".to_string(),
-            vec![
-                BN254::from(5u32 * ONE),
-                BN254::from(6u32 * ONE),
-                BN254::from(7u32 * ONE),
-                BN254::from(8u32 * ONE),
-            ],
-        );
-        tensor_values.insert(
-            "c".to_string(),
-            vec![
-                BN254::from(19u32 * ONE),
-                BN254::from(22u32 * ONE),
-                BN254::from(43u32 * ONE),
-                BN254::from(50u32 * ONE),
-            ],
-        );
+    let (simd_input, simd_public_input) =
+        witness.to_simd::<<GKRConfig as expander_config::GKRConfig>::SimdCircuitField>();
+    expander_circuit.layers[0].input_vals = simd_input;
+    expander_circuit.public_input = simd_public_input.clone();
 
-        let assignment = DagAssignment { tensor_values };
+    // Prove
+    expander_circuit.evaluate();
+    let mut prover = gkr::Prover::new(&config);
+    prover.prepare_mem(&expander_circuit);
+    let (claimed_v, proof) = prover.prove(&mut expander_circuit);
 
-        let witness = compile_result
-            .witness_solver
-            .solve_witness(&assignment)
-            .unwrap();
-        let output = compile_result.layered_circuit.run(&witness);
-        assert_eq!(output, vec![true]);
-    }
+    // Save proof to file
+    let file = File::create(proof_path).unwrap();
+    let writer = BufWriter::new(file);
+    proof.serialize_into(writer).unwrap();
+
+    // Verify
+    let verifier = gkr::Verifier::new(&config);
+    let result = verifier.verify(
+        &mut expander_circuit,
+        &simd_public_input,
+        &claimed_v,
+        &proof,
+    );
+
+    println!("Expander proof generated and verified successfully");
+    assert_eq!(result, true);
+    result
 }
 
 /// Assignment for the DAG circuit
@@ -432,5 +454,167 @@ impl<F: Field> DumpLoadTwoVariables<F> for DagAssignment<F> {
     fn num_vars(&self) -> (usize, usize) {
         let n = self.tensor_values.values().map(|v| v.len()).sum();
         (n, n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use expander_compiler::field::BN254;
+    use expander_compiler::frontend::{compile, BN254Config};
+    use internal::Serde;
+    use std::fs::File;
+    use std::io::BufWriter;
+
+    const ONE: u32 = 1 << 16;
+
+    #[test]
+    fn test_matmul() {
+        // Create a simple DAG for matrix multiplication
+        let mut nodes = HashMap::new();
+
+        // Input matrices A and B
+        nodes.insert(
+            "a".to_string(),
+            TensorNode {
+                uuid: "a".to_string(),
+                shape: vec![2, 2],
+                op_name: "input".to_string(),
+                parents: vec![],
+                parameters: None,
+            },
+        );
+        nodes.insert(
+            "b".to_string(),
+            TensorNode {
+                uuid: "b".to_string(),
+                shape: vec![2, 2],
+                op_name: "input".to_string(),
+                parents: vec![],
+                parameters: None,
+            },
+        );
+
+        // Output matrix C = A * B
+        nodes.insert(
+            "c".to_string(),
+            TensorNode {
+                uuid: "c".to_string(),
+                shape: vec![2, 2],
+                op_name: "matmul".to_string(),
+                parents: vec!["a".to_string(), "b".to_string()],
+                parameters: None,
+            },
+        );
+
+        let graph = ComputationGraph {
+            nodes,
+            output_node: "c".to_string(),
+        };
+
+        let mut circuit = DagCircuit::new(graph);
+
+        // Initialize input tensors with variables
+        circuit.init_tensor("a");
+        circuit.init_tensor("b");
+        circuit.init_tensor("c");
+
+        // Test correct multiplication
+        let mut tensor_values = HashMap::new();
+        tensor_values.insert(
+            "a".to_string(),
+            vec![
+                BN254::from(1u32 * ONE),
+                BN254::from(2u32 * ONE),
+                BN254::from(3u32 * ONE),
+                BN254::from(4u32 * ONE),
+            ],
+        );
+        tensor_values.insert(
+            "b".to_string(),
+            vec![
+                BN254::from(5u32 * ONE),
+                BN254::from(6u32 * ONE),
+                BN254::from(7u32 * ONE),
+                BN254::from(8u32 * ONE),
+            ],
+        );
+        tensor_values.insert(
+            "c".to_string(),
+            vec![
+                BN254::from(19u32 * ONE),
+                BN254::from(22u32 * ONE),
+                BN254::from(43u32 * ONE),
+                BN254::from(50u32 * ONE),
+            ],
+        );
+
+        let assignment = DagAssignment { tensor_values };
+
+        assert!(generate_witness(
+            &circuit,
+            &assignment,
+            "circuit_dag_bn254.txt",
+            "witness_dag_bn254.txt",
+            "witness_dag_bn254_solver.txt",
+            "proof_dag_bn254.txt"
+        ));
+    }
+
+    #[test]
+    fn test_matmul_dag_from_json() {
+        // Load the test graph from JSON
+        let json_str = fs::read_to_string("tests/assets/matmul_test.json")
+            .expect("Failed to read test JSON file");
+        let graph: ComputationGraph =
+            serde_json::from_str(&json_str).expect("Failed to parse JSON into ComputationGraph");
+
+        let mut circuit = DagCircuit::new(graph);
+
+        // Initialize input tensors with variables
+        circuit.init_tensor("a");
+        circuit.init_tensor("b");
+        circuit.init_tensor("c");
+
+        let compile_result = compile::<BN254Config, DagCircuit>(&circuit).unwrap();
+
+        // Test correct multiplication
+        let mut tensor_values = HashMap::new();
+        tensor_values.insert(
+            "a".to_string(),
+            vec![
+                BN254::from(1u32 * ONE),
+                BN254::from(2u32 * ONE),
+                BN254::from(3u32 * ONE),
+                BN254::from(4u32 * ONE),
+            ],
+        );
+        tensor_values.insert(
+            "b".to_string(),
+            vec![
+                BN254::from(5u32 * ONE),
+                BN254::from(6u32 * ONE),
+                BN254::from(7u32 * ONE),
+                BN254::from(8u32 * ONE),
+            ],
+        );
+        tensor_values.insert(
+            "c".to_string(),
+            vec![
+                BN254::from(19u32 * ONE),
+                BN254::from(22u32 * ONE),
+                BN254::from(43u32 * ONE),
+                BN254::from(50u32 * ONE),
+            ],
+        );
+
+        let assignment = DagAssignment { tensor_values };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        let output = compile_result.layered_circuit.run(&witness);
+        assert_eq!(output, vec![true]);
     }
 }

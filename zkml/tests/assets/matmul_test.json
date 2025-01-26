@@ -1,0 +1,38 @@
+{
+    "nodes": {
+        "a": {
+            "uuid": "a",
+            "shape": [
+                2,
+                2
+            ],
+            "op_name": "input",
+            "parents": [],
+            "parameters": null
+        },
+        "b": {
+            "uuid": "b",
+            "shape": [
+                2,
+                2
+            ],
+            "op_name": "input",
+            "parents": [],
+            "parameters": null
+        },
+        "c": {
+            "uuid": "c",
+            "shape": [
+                2,
+                2
+            ],
+            "op_name": "matmul",
+            "parents": [
+                "a",
+                "b"
+            ],
+            "parameters": null
+        }
+    },
+    "output_node": "c"
+}
