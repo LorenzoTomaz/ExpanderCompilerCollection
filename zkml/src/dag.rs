@@ -35,6 +35,9 @@ pub struct TensorNode {
     pub parents: Vec<String>,
     /// Optional parameters for the operation
     pub parameters: Option<serde_json::Value>,
+    /// Signs of the tensor elements (true for positive, false for negative)
+    #[serde(default)]
+    pub signs: Vec<bool>,
 }
 
 /// Represents the entire computation graph
@@ -50,7 +53,7 @@ pub struct ComputationGraph {
 #[derive(Clone)]
 pub struct DagCircuit {
     /// The computation graph to verify
-    graph: ComputationGraph,
+    pub graph: ComputationGraph,
     /// The flattened tensor data for each node
     tensor_data: HashMap<String, Vec<Variable>>,
 }
@@ -76,6 +79,13 @@ impl DagCircuit {
             data.clone()
         } else {
             self.init_tensor(uuid)
+        }
+    }
+
+    /// Update signs for a node
+    pub fn update_signs(&mut self, uuid: &str, signs: Vec<bool>) {
+        if let Some(node) = self.graph.nodes.get_mut(uuid) {
+            node.signs = signs;
         }
     }
 }
@@ -120,6 +130,42 @@ impl<C: Config> Define<C> for DagCircuit {
                     // Input nodes don't need verification
                     builder.constant(C::CircuitField::from(1u32))
                 }
+                "add" => {
+                    assert_eq!(node.parents.len(), 2, "Add requires 2 inputs");
+                    let a_data = self.tensor_data.get(&node.parents[0]).unwrap();
+                    let b_data = self.tensor_data.get(&node.parents[1]).unwrap();
+                    let a_node = self.graph.nodes.get(&node.parents[0]).unwrap();
+                    let b_node = self.graph.nodes.get(&node.parents[1]).unwrap();
+
+                    crate::verifiers::verify_tensor_add(
+                        builder,
+                        a_data,
+                        b_data,
+                        output_data,
+                        &a_node.signs,
+                        &b_node.signs,
+                        &node.signs,
+                        &node.shape,
+                    )
+                }
+                "sub" => {
+                    assert_eq!(node.parents.len(), 2, "Sub requires 2 inputs");
+                    let a_data = self.tensor_data.get(&node.parents[0]).unwrap();
+                    let b_data = self.tensor_data.get(&node.parents[1]).unwrap();
+                    let a_node = self.graph.nodes.get(&node.parents[0]).unwrap();
+                    let b_node = self.graph.nodes.get(&node.parents[1]).unwrap();
+
+                    crate::verifiers::verify_tensor_sub(
+                        builder,
+                        a_data,
+                        b_data,
+                        output_data,
+                        &a_node.signs,
+                        &b_node.signs,
+                        &node.signs,
+                        &node.shape,
+                    )
+                }
                 "matmul" => {
                     assert_eq!(node.parents.len(), 2, "Matmul requires 2 inputs");
                     let a_data = self.tensor_data.get(&node.parents[0]).unwrap();
@@ -132,36 +178,13 @@ impl<C: Config> Define<C> for DagCircuit {
                         a_data,
                         b_data,
                         output_data,
+                        &a_node.signs,
+                        &b_node.signs,
+                        &node.signs,
                         &a_node.shape,
                         &b_node.shape,
                         &node.shape,
                         5, // Default number of iterations
-                    )
-                }
-                "add" => {
-                    assert_eq!(node.parents.len(), 2, "Add requires 2 inputs");
-                    let a_data = self.tensor_data.get(&node.parents[0]).unwrap();
-                    let b_data = self.tensor_data.get(&node.parents[1]).unwrap();
-
-                    crate::verifiers::verify_tensor_add(
-                        builder,
-                        a_data,
-                        b_data,
-                        output_data,
-                        &node.shape,
-                    )
-                }
-                "sub" => {
-                    assert_eq!(node.parents.len(), 2, "Sub requires 2 inputs");
-                    let a_data = self.tensor_data.get(&node.parents[0]).unwrap();
-                    let b_data = self.tensor_data.get(&node.parents[1]).unwrap();
-
-                    crate::verifiers::verify_tensor_sub(
-                        builder,
-                        a_data,
-                        b_data,
-                        output_data,
-                        &node.shape,
                     )
                 }
                 // Add more operations as they are implemented
@@ -482,6 +505,7 @@ mod tests {
                 op_name: "input".to_string(),
                 parents: vec![],
                 parameters: None,
+                signs: vec![true, false, true, true], // [+1, -2, +3, +4]
             },
         );
         nodes.insert(
@@ -492,6 +516,7 @@ mod tests {
                 op_name: "input".to_string(),
                 parents: vec![],
                 parameters: None,
+                signs: vec![true, true, false, true], // [+5, +6, -7, +8]
             },
         );
 
@@ -504,6 +529,7 @@ mod tests {
                 op_name: "matmul".to_string(),
                 parents: vec!["a".to_string(), "b".to_string()],
                 parameters: None,
+                signs: vec![true, false, false, true], // [+19, -10, -13, +50]
             },
         );
 
@@ -519,33 +545,33 @@ mod tests {
         circuit.init_tensor("b");
         circuit.init_tensor("c");
 
-        // Test correct multiplication
+        // Test correct multiplication with signs
         let mut tensor_values = HashMap::new();
         tensor_values.insert(
             "a".to_string(),
             vec![
-                BN254::from(1u32 * ONE),
-                BN254::from(2u32 * ONE),
-                BN254::from(3u32 * ONE),
-                BN254::from(4u32 * ONE),
+                BN254::from(1u32 * ONE), // +1
+                BN254::from(2u32 * ONE), // -2
+                BN254::from(3u32 * ONE), // +3
+                BN254::from(4u32 * ONE), // +4
             ],
         );
         tensor_values.insert(
             "b".to_string(),
             vec![
-                BN254::from(5u32 * ONE),
-                BN254::from(6u32 * ONE),
-                BN254::from(7u32 * ONE),
-                BN254::from(8u32 * ONE),
+                BN254::from(5u32 * ONE), // +5
+                BN254::from(6u32 * ONE), // +6
+                BN254::from(7u32 * ONE), // -7
+                BN254::from(8u32 * ONE), // +8
             ],
         );
         tensor_values.insert(
             "c".to_string(),
             vec![
-                BN254::from(19u32 * ONE),
-                BN254::from(22u32 * ONE),
-                BN254::from(43u32 * ONE),
-                BN254::from(50u32 * ONE),
+                BN254::from(19u32 * ONE), // -19
+                BN254::from(10u32 * ONE), // +22
+                BN254::from(13u32 * ONE), // +43
+                BN254::from(50u32 * ONE), // +50
             ],
         );
 
@@ -566,8 +592,13 @@ mod tests {
         // Load the test graph from JSON
         let json_str = fs::read_to_string("tests/assets/matmul_test.json")
             .expect("Failed to read test JSON file");
-        let graph: ComputationGraph =
+        let mut graph: ComputationGraph =
             serde_json::from_str(&json_str).expect("Failed to parse JSON into ComputationGraph");
+
+        // Initialize signs for each node
+        graph.nodes.get_mut("a").unwrap().signs = vec![true, false, true, true]; // [+1, -2, +3, +4]
+        graph.nodes.get_mut("b").unwrap().signs = vec![true, true, false, true]; // [+5, +6, -7, +8]
+        graph.nodes.get_mut("c").unwrap().signs = vec![true, false, false, true]; // [+19, -10, -13, +50]
 
         let mut circuit = DagCircuit::new(graph);
 
@@ -578,33 +609,33 @@ mod tests {
 
         let compile_result = compile::<BN254Config, DagCircuit>(&circuit).unwrap();
 
-        // Test correct multiplication
+        // Test correct multiplication with signs
         let mut tensor_values = HashMap::new();
         tensor_values.insert(
             "a".to_string(),
             vec![
-                BN254::from(1u32 * ONE),
-                BN254::from(2u32 * ONE),
-                BN254::from(3u32 * ONE),
-                BN254::from(4u32 * ONE),
+                BN254::from(1u32 * ONE), // +1
+                BN254::from(2u32 * ONE), // -2
+                BN254::from(3u32 * ONE), // +3
+                BN254::from(4u32 * ONE), // +4
             ],
         );
         tensor_values.insert(
             "b".to_string(),
             vec![
-                BN254::from(5u32 * ONE),
-                BN254::from(6u32 * ONE),
-                BN254::from(7u32 * ONE),
-                BN254::from(8u32 * ONE),
+                BN254::from(5u32 * ONE), // +5
+                BN254::from(6u32 * ONE), // +6
+                BN254::from(7u32 * ONE), // -7
+                BN254::from(8u32 * ONE), // +8
             ],
         );
         tensor_values.insert(
             "c".to_string(),
             vec![
-                BN254::from(19u32 * ONE),
-                BN254::from(22u32 * ONE),
-                BN254::from(43u32 * ONE),
-                BN254::from(50u32 * ONE),
+                BN254::from(19u32 * ONE), // -19 (+1*+5 + (-2)*+6)
+                BN254::from(10u32 * ONE), // +22 (+1*+6 + (-2)*(-7))
+                BN254::from(13u32 * ONE), // +43 (+3*+5 + +4*+6)
+                BN254::from(50u32 * ONE), // +50 (+3*+6 + +4*+8)
             ],
         );
 
@@ -616,5 +647,46 @@ mod tests {
             .unwrap();
         let output = compile_result.layered_circuit.run(&witness);
         assert_eq!(output, vec![true]);
+
+        // Test incorrect multiplication
+        let mut wrong_tensor_values = HashMap::new();
+        wrong_tensor_values.insert(
+            "a".to_string(),
+            vec![
+                BN254::from(1u32 * ONE), // +1
+                BN254::from(2u32 * ONE), // -2
+                BN254::from(3u32 * ONE), // +3
+                BN254::from(4u32 * ONE), // +4
+            ],
+        );
+        wrong_tensor_values.insert(
+            "b".to_string(),
+            vec![
+                BN254::from(5u32 * ONE), // +5
+                BN254::from(6u32 * ONE), // +6
+                BN254::from(7u32 * ONE), // -7
+                BN254::from(8u32 * ONE), // +8
+            ],
+        );
+        wrong_tensor_values.insert(
+            "c".to_string(),
+            vec![
+                BN254::from(19u32 * ONE), // -19
+                BN254::from(22u32 * ONE), // +22
+                BN254::from(43u32 * ONE), // +43
+                BN254::from(51u32 * ONE), // Wrong value
+            ],
+        );
+
+        let wrong_assignment = DagAssignment {
+            tensor_values: wrong_tensor_values,
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&wrong_assignment)
+            .unwrap();
+        let output = compile_result.layered_circuit.run(&witness);
+        assert_eq!(output, vec![false]);
     }
 }

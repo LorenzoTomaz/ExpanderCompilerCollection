@@ -37,12 +37,14 @@ impl PyDagCircuit {
     }
 
     fn generate_witness(
-        &self,
+        &mut self,
         tensor_values: &PyDict,
+        tensor_signs: &PyDict,
         circuit_path: &str,
         witness_path: &str,
         witness_solver_path: &str,
         proof_path: &str,
+        should_scale: Option<bool>,
     ) -> PyResult<bool> {
         use expander_compiler::field::BN254;
 
@@ -52,9 +54,22 @@ impl PyDagCircuit {
             let value = value.extract::<Vec<u32>>()?;
             let field_values: Vec<BN254> = value
                 .into_iter()
-                .map(|x| BN254::from(x * (1 << 16)))
+                .map(|x| {
+                    if should_scale.unwrap_or(false) {
+                        BN254::from(x * (1 << 16))
+                    } else {
+                        BN254::from(x)
+                    }
+                })
                 .collect();
-            values.insert(key, field_values);
+            values.insert(key.clone(), field_values);
+        }
+
+        // Update signs in the graph
+        for (key, signs) in tensor_signs.iter() {
+            let key = key.extract::<String>()?;
+            let signs = signs.extract::<Vec<bool>>()?;
+            self.inner.update_signs(&key, signs);
         }
 
         let assignment = DagAssignment {
@@ -88,6 +103,7 @@ impl PyDagCircuit {
         let result = std::panic::catch_unwind(|| {
             generate_proof_from_files(circuit_path, witness_path, witness_solver_path, proof_path)
         });
+
         match result {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
