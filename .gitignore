@@ -9,3 +9,5 @@ libec_go_lib.*
 .vscode
 .code
 .DS_Store
+zkml/python/zkml.egg-info
+zkml/python/build
