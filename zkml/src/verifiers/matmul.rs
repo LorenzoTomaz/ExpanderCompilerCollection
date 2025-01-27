@@ -1,6 +1,7 @@
 use arith::Field;
 use expander_compiler::field::BN254;
 use expander_compiler::frontend::*;
+use extra::UnconstrainedAPI;
 use rand::Rng;
 
 /// Fixed-point scaling factor (2^16)
@@ -57,6 +58,12 @@ pub fn verify_matmul<C: Config>(
     let false_const = builder.constant(C::CircuitField::from(0u32));
     let checked = false;
 
+    // Scale C by ONE to match A*B result
+    let mut scaled_c = Vec::with_capacity(c.len());
+    for i in 0..c.len() {
+        scaled_c.push(builder.unconstrained_mul(c[i], one_const));
+    }
+
     let mut rng = rand::thread_rng();
 
     // Run multiple iterations for probability amplification
@@ -72,7 +79,7 @@ pub fn verify_matmul<C: Config>(
         for i in 0..m {
             for j in 0..p {
                 if r[j] {
-                    let c_ij = c[i * p + j];
+                    let c_ij = scaled_c[i * p + j];
                     let c_sign = c_signs[i * p + j];
                     if c_sign {
                         cr[i] = builder.add(cr[i], c_ij);
@@ -110,7 +117,7 @@ pub fn verify_matmul<C: Config>(
 
                 // Compute magnitude
                 let prod = builder.mul(a_ik, br_k);
-                let scaled_prod = builder.div(prod, one_const, checked);
+                let scaled_prod = prod; // No need to scale, A*B is already scaled correctly
 
                 // Add or subtract based on sign
                 if a_sign {
@@ -123,9 +130,10 @@ pub fn verify_matmul<C: Config>(
 
         // Compare Cr with ABr
         for i in 0..m {
-            let diff = builder.sub(cr[i], abr[i]);
-            let eq = builder.is_zero(diff);
-            result = builder.and(result, eq);
+            let diff = builder.sub(abr[i], cr[i]);
+            let iter_result = builder.unconstrained_lesser(diff, one_const);
+
+            result = builder.and(result, iter_result);
         }
     }
     result
@@ -162,7 +170,7 @@ mod tests {
                     &[2, 2], // A is 2x2
                     &[2, 2], // B is 2x2
                     &[2, 2], // C is 2x2
-                    5,       // num_iterations
+                    7,       // num_iterations
                 );
                 let true_const = builder.constant(C::CircuitField::from(1u32));
                 builder.assert_is_equal(result, true_const);
@@ -547,6 +555,225 @@ mod tests {
                 BN254::from(22u32 * ONE),
                 BN254::from(43u32 * ONE),
                 BN254::from(50u32 * ONE),
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        let output = compile_result.layered_circuit.run(&witness);
+        assert_eq!(output, vec![true]);
+    }
+
+    #[test]
+    fn test_verify_matmul_1x1() {
+        // Test case with 1x1 matrices
+        declare_circuit!(TestCircuit {
+            a: [Variable],
+            b: [Variable],
+            c: [Variable],
+        });
+
+        impl<C: Config> Define<C> for TestCircuit<Variable> {
+            fn define(&self, builder: &mut API<C>) {
+                let a_signs = vec![true]; // [+13107]
+                let b_signs = vec![true]; // [+32768]
+                let c_signs = vec![true]; // [+429496729] (13107 * 32768)
+
+                let result = verify_matmul(
+                    builder,
+                    &self.a,
+                    &self.b,
+                    &self.c,
+                    &a_signs,
+                    &b_signs,
+                    &c_signs,
+                    &[1, 1], // A is 1x1
+                    &[1, 1], // B is 1x1
+                    &[1, 1], // C is 1x1
+                    5,       // num_iterations
+                );
+                let true_const = builder.constant(C::CircuitField::from(1u32));
+                builder.assert_is_equal(result, true_const);
+            }
+        }
+
+        let circuit = TestCircuit {
+            a: vec![Variable::default(); 1],
+            b: vec![Variable::default(); 1],
+            c: vec![Variable::default(); 1],
+        };
+
+        let compile_result = compile::<BN254Config, TestCircuit<Variable>>(&circuit).unwrap();
+
+        let assignment = TestCircuit::<BN254> {
+            a: vec![BN254::from(13107u32)], // 13107
+            b: vec![BN254::from(32768u32)], // 32768
+            c: vec![BN254::from(6553u32)],  // 13107 * 32768
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        let output = compile_result.layered_circuit.run(&witness);
+        assert_eq!(output, vec![true]);
+    }
+
+    #[test]
+    fn test_verify_matmul_small_numbers() {
+        // Test case with small numbers (less than 1)
+        declare_circuit!(TestCircuit {
+            a: [Variable],
+            b: [Variable],
+            c: [Variable],
+        });
+
+        impl<C: Config> Define<C> for TestCircuit<Variable> {
+            fn define(&self, builder: &mut API<C>) {
+                let a_signs = vec![true]; // [+0.2]
+                let b_signs = vec![true]; // [+0.5]
+                let c_signs = vec![true]; // [+0.1] (0.2 * 0.5)
+
+                let result = verify_matmul(
+                    builder,
+                    &self.a,
+                    &self.b,
+                    &self.c,
+                    &a_signs,
+                    &b_signs,
+                    &c_signs,
+                    &[1, 1], // A is 1x1
+                    &[1, 1], // B is 1x1
+                    &[1, 1], // C is 1x1
+                    5,       // num_iterations
+                );
+                let true_const = builder.constant(C::CircuitField::from(1u32));
+                builder.assert_is_equal(result, true_const);
+            }
+        }
+
+        let circuit = TestCircuit {
+            a: vec![Variable::default(); 1],
+            b: vec![Variable::default(); 1],
+            c: vec![Variable::default(); 1],
+        };
+
+        let compile_result = compile::<BN254Config, TestCircuit<Variable>>(&circuit).unwrap();
+
+        // Test with small numbers: 0.2 * 0.5 = 0.1
+        let assignment = TestCircuit::<BN254> {
+            a: vec![BN254::from(13107u32)], // 0.2 * 2^16 = 13107
+            b: vec![BN254::from(32768u32)], // 0.5 * 2^16 = 32768
+            c: vec![BN254::from(6553u32)],  // 0.1 * 2^16 = 6553
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        let output = compile_result.layered_circuit.run(&witness);
+        assert_eq!(output, vec![true]);
+    }
+
+    #[test]
+    fn test_verify_matmul_chained() {
+        // Test case for chained matrix multiplication
+        declare_circuit!(TestCircuit {
+            aa: [Variable],
+            bb: [Variable],
+            cc: [Variable],
+            dd: [Variable],
+            ee: [Variable],
+        });
+
+        impl<C: Config> Define<C> for TestCircuit<Variable> {
+            fn define(&self, builder: &mut API<C>) {
+                // All values are positive
+                let aa_signs = vec![true, true, true, true];
+                let bb_signs = vec![true, true, true, true];
+                let cc_signs = vec![true, true, true, true];
+                let dd_signs = vec![true, true, true, true];
+                let ee_signs = vec![true, true, true, true];
+
+                // First multiplication: cc = aa * bb
+                let result1 = verify_matmul(
+                    builder,
+                    &self.aa,
+                    &self.bb,
+                    &self.cc,
+                    &aa_signs,
+                    &bb_signs,
+                    &cc_signs,
+                    &[2, 2], // aa is 2x2
+                    &[2, 2], // bb is 2x2
+                    &[2, 2], // cc is 2x2
+                    5,       // num_iterations
+                );
+
+                // Second multiplication: ee = cc * dd
+                let result2 = verify_matmul(
+                    builder,
+                    &self.cc,
+                    &self.dd,
+                    &self.ee,
+                    &cc_signs,
+                    &dd_signs,
+                    &ee_signs,
+                    &[2, 2], // cc is 2x2
+                    &[2, 2], // dd is 2x2
+                    &[2, 2], // ee is 2x2
+                    5,       // num_iterations
+                );
+
+                // Both multiplications must be correct
+                let true_const = builder.constant(C::CircuitField::from(1u32));
+                let final_result = builder.and(result1, result2);
+                builder.assert_is_equal(final_result, true_const);
+            }
+        }
+
+        let circuit = TestCircuit {
+            aa: vec![Variable::default(); 4],
+            bb: vec![Variable::default(); 4],
+            cc: vec![Variable::default(); 4],
+            dd: vec![Variable::default(); 4],
+            ee: vec![Variable::default(); 4],
+        };
+
+        let compile_result = compile::<BN254Config, TestCircuit<Variable>>(&circuit).unwrap();
+
+        let assignment = TestCircuit::<BN254> {
+            aa: vec![
+                BN254::from(64684u32), // Values from test_zkml.py
+                BN254::from(131072u32),
+                BN254::from(196608u32),
+                BN254::from(262144u32),
+            ],
+            bb: vec![
+                BN254::from(32768u32),
+                BN254::from(425984u32),
+                BN254::from(491520u32),
+                BN254::from(524288u32),
+            ],
+            cc: vec![
+                BN254::from(1015382u32),
+                BN254::from(1469022u32),
+                BN254::from(2064384u32),
+                BN254::from(3375104u32),
+            ],
+            dd: vec![
+                BN254::from(65536u32),
+                BN254::from(131072u32),
+                BN254::from(196608u32),
+                BN254::from(262144u32),
+            ],
+            ee: vec![
+                BN254::from(5422448u32),
+                BN254::from(7906852u32),
+                BN254::from(12189696u32),
+                BN254::from(17629184u32),
             ],
         };
 

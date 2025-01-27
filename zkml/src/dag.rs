@@ -187,6 +187,20 @@ impl<C: Config> Define<C> for DagCircuit {
                         5, // Default number of iterations
                     )
                 }
+                "sqrt" => {
+                    assert_eq!(node.parents.len(), 1, "Sqrt requires 1 input");
+                    let input_data = self.tensor_data.get(&node.parents[0]).unwrap();
+                    let input_node = self.graph.nodes.get(&node.parents[0]).unwrap();
+
+                    crate::verifiers::verify_sqrt(
+                        builder,
+                        input_data,
+                        output_data,
+                        &input_node.signs,
+                        &node.signs,
+                        &node.shape,
+                    )
+                }
                 // Add more operations as they are implemented
                 _ => panic!("Unsupported operation: {}", node.op_name),
             };
@@ -688,5 +702,197 @@ mod tests {
             .unwrap();
         let output = compile_result.layered_circuit.run(&witness);
         assert_eq!(output, vec![false]);
+    }
+
+    #[test]
+    fn test_sqrt() {
+        // Create a simple DAG for square root
+        let mut nodes = HashMap::new();
+
+        // Input value
+        nodes.insert(
+            "0".to_string(),
+            TensorNode {
+                uuid: "0".to_string(),
+                shape: vec![1], // Changed from [1,1] to [1]
+                op_name: "input".to_string(),
+                parents: vec![],
+                parameters: None,
+                signs: vec![true], // positive input
+            },
+        );
+
+        // Output sqrt
+        nodes.insert(
+            "1".to_string(),
+            TensorNode {
+                uuid: "1".to_string(),
+                shape: vec![1], // Changed from [1,1] to [1]
+                op_name: "sqrt".to_string(),
+                parents: vec!["0".to_string()],
+                parameters: None,
+                signs: vec![true], // positive output
+            },
+        );
+
+        let graph = ComputationGraph {
+            nodes,
+            output_node: "1".to_string(),
+        };
+
+        let mut circuit = DagCircuit::new(graph);
+
+        // Initialize tensors with variables
+        circuit.init_tensor("0");
+        circuit.init_tensor("1");
+
+        // Test sqrt(16) = 4
+        let mut tensor_values = HashMap::new();
+        tensor_values.insert(
+            "0".to_string(),
+            vec![BN254::from(16u32 * ONE)], // 16
+        );
+        tensor_values.insert(
+            "1".to_string(),
+            vec![BN254::from(4u32 * ONE)], // 4
+        );
+
+        let assignment = DagAssignment { tensor_values };
+
+        // Generate witness and verify
+        let compile_result = compile::<BN254Config, DagCircuit>(&circuit).unwrap();
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        let output = compile_result.layered_circuit.run(&witness);
+        assert_eq!(output, vec![true]);
+
+        // Test with proof generation
+        assert!(generate_witness(
+            &circuit,
+            &assignment,
+            "circuit_sqrt_bn254.txt",
+            "witness_sqrt_bn254.txt",
+            "witness_sqrt_bn254_solver.txt",
+            "proof_sqrt_bn254.txt"
+        ));
+
+        // Clean up test files
+        for file in [
+            "circuit_sqrt_bn254.txt",
+            "witness_sqrt_bn254.txt",
+            "witness_sqrt_bn254_solver.txt",
+            "proof_sqrt_bn254.txt",
+        ] {
+            if std::path::Path::new(file).exists() {
+                std::fs::remove_file(file).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn test_chained_matmul_dag() {
+        // Load the test graph from JSON
+        let json_str = r#"{"nodes": {"0": {"uuid": "0", "shape": [2, 2], "op_name": "input", "parents": [], "parameters": null}, "1": {"uuid": "1", "shape": [2, 2], "op_name": "input", "parents": [], "parameters": null}, "2": {"uuid": "2", "shape": [2, 2], "op_name": "input", "parents": [], "parameters": null}, "3": {"uuid": "3", "shape": [2, 2], "op_name": "matmul", "parents": ["0", "1"], "parameters": null}, "4": {"uuid": "4", "shape": [2, 2], "op_name": "matmul", "parents": ["3", "2"], "parameters": null}}, "output_node": "4"}"#;
+        let mut graph: ComputationGraph =
+            serde_json::from_str(json_str).expect("Failed to parse JSON into ComputationGraph");
+
+        // Initialize signs for each node
+        graph.nodes.get_mut("0").unwrap().signs = vec![true, true, true, true]; // aa values
+        graph.nodes.get_mut("1").unwrap().signs = vec![true, true, true, true]; // bb values
+        graph.nodes.get_mut("2").unwrap().signs = vec![true, true, true, true]; // dd values
+        graph.nodes.get_mut("3").unwrap().signs = vec![true, true, true, true]; // cc values
+        graph.nodes.get_mut("4").unwrap().signs = vec![true, true, true, true]; // ee values
+
+        let mut circuit = DagCircuit::new(graph);
+
+        // Initialize tensors with variables
+        circuit.init_tensor("0");
+        circuit.init_tensor("1");
+        circuit.init_tensor("2");
+        circuit.init_tensor("3");
+        circuit.init_tensor("4");
+
+        let compile_result = compile::<BN254Config, DagCircuit>(&circuit).unwrap();
+
+        // Test correct multiplication with fixed-point scaling
+        let mut tensor_values = HashMap::new();
+        tensor_values.insert(
+            "0".to_string(),
+            vec![
+                BN254::from(64684u32), // aa values
+                BN254::from(131072u32),
+                BN254::from(196608u32),
+                BN254::from(262144u32),
+            ],
+        );
+        tensor_values.insert(
+            "1".to_string(),
+            vec![
+                BN254::from(32768u32), // bb values
+                BN254::from(425984u32),
+                BN254::from(491520u32),
+                BN254::from(524288u32),
+            ],
+        );
+        tensor_values.insert(
+            "2".to_string(),
+            vec![
+                BN254::from(65536u32), // dd values
+                BN254::from(131072u32),
+                BN254::from(196608u32),
+                BN254::from(262144u32),
+            ],
+        );
+        tensor_values.insert(
+            "3".to_string(),
+            vec![
+                BN254::from(1015382u32), // cc values
+                BN254::from(1469022u32),
+                BN254::from(2064384u32),
+                BN254::from(3375104u32),
+            ],
+        );
+        tensor_values.insert(
+            "4".to_string(),
+            vec![
+                BN254::from(5422448u32), // ee values
+                BN254::from(7906852u32),
+                BN254::from(12189696u32),
+                BN254::from(17629184u32),
+            ],
+        );
+
+        let assignment = DagAssignment { tensor_values };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        let output = compile_result.layered_circuit.run(&witness);
+        assert_eq!(output, vec![true]);
+
+        // Test with proof generation
+        assert!(generate_witness(
+            &circuit,
+            &assignment,
+            "circuit_chained_matmul_bn254.txt",
+            "witness_chained_matmul_bn254.txt",
+            "witness_chained_matmul_bn254_solver.txt",
+            "proof_chained_matmul_bn254.txt"
+        ));
+
+        // Clean up test files
+        for file in [
+            "circuit_chained_matmul_bn254.txt",
+            "witness_chained_matmul_bn254.txt",
+            "witness_chained_matmul_bn254_solver.txt",
+            "proof_chained_matmul_bn254.txt",
+        ] {
+            if std::path::Path::new(file).exists() {
+                std::fs::remove_file(file).unwrap();
+            }
+        }
     }
 }

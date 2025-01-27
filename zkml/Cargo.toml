@@ -9,8 +9,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 expander_compiler = { path = "../expander_compiler"}
-
-ark-std.workspace = true
+ark-ff = "0.4.0"
+ark-bn254 = "0.4.0"
+ark-std = "0.4.0"
 rand.workspace = true
 expander_config.workspace = true
 expander_circuit.workspace = true
@@ -20,4 +21,4 @@ gf2.workspace = true
 mersenne31.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-pyo3 = { version = "0.19", features = ["extension-module"] }
+pyo3 = { version = "0.19.0", features = ["extension-module"] }
