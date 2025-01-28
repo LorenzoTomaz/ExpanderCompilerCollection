@@ -5,7 +5,6 @@ use extra::UnconstrainedAPI;
 use rand::Rng;
 
 /// Fixed-point scaling factor (2^16)
-const ONE: u32 = 1 << 16;
 
 /// Verifies matrix multiplication AB = C using Freivalds' algorithm.
 /// Uses random vectors from {0,1}^n for probabilistic verification.
@@ -46,7 +45,7 @@ pub fn verify_matmul<C: Config>(
     assert_eq!(a_shape[1], b_shape[0], "Matrix dimensions must match");
     assert_eq!(a_shape[0], c_shape[0], "Output rows must match A");
     assert_eq!(b_shape[1], c_shape[1], "Output cols must match B");
-
+    const ONE: u32 = 1 << 16;
     let m = a_shape[0] as usize;
     let n = a_shape[1] as usize;
     let p = b_shape[1] as usize;
@@ -54,6 +53,7 @@ pub fn verify_matmul<C: Config>(
     // Initialize result as true and create constants
     let mut result = builder.constant(C::CircuitField::from(1u32));
     let one_const = builder.constant(C::CircuitField::from(ONE as u32));
+    let zero_const = builder.constant(C::CircuitField::ZERO);
     let true_const = builder.constant(C::CircuitField::from(1u32));
     let false_const = builder.constant(C::CircuitField::from(0u32));
     let checked = false;
@@ -61,7 +61,7 @@ pub fn verify_matmul<C: Config>(
     // Scale C by ONE to match A*B result
     let mut scaled_c = Vec::with_capacity(c.len());
     for i in 0..c.len() {
-        scaled_c.push(builder.unconstrained_mul(c[i], one_const));
+        scaled_c.push(builder.mul(c[i], one_const));
     }
 
     let mut rng = rand::thread_rng();
@@ -71,21 +71,30 @@ pub fn verify_matmul<C: Config>(
         // Generate random vector r from {0,1}^p
         let mut r: Vec<bool> = Vec::with_capacity(p);
         for _ in 0..p {
-            r.push(rng.gen_bool(0.5));
+            if p == 1 {
+                r.push(true);
+            } else {
+                r.push(rng.gen_bool(0.5));
+            }
         }
 
         // Compute Cr
         let mut cr = vec![builder.constant(C::CircuitField::ZERO); m];
         for i in 0..m {
             for j in 0..p {
+                let c_ij = scaled_c[i * p + j];
                 if r[j] {
-                    let c_ij = scaled_c[i * p + j];
                     let c_sign = c_signs[i * p + j];
                     if c_sign {
                         cr[i] = builder.add(cr[i], c_ij);
                     } else {
                         cr[i] = builder.sub(cr[i], c_ij);
                     }
+                }
+                // even when having r[j] = false, we still need to add c_ij to cr[i] and multiply by 0
+                else {
+                    let factor = builder.mul(zero_const, c_ij);
+                    cr[i] = builder.add(cr[i], factor);
                 }
             }
         }
@@ -95,14 +104,17 @@ pub fn verify_matmul<C: Config>(
         let mut br = vec![builder.constant(C::CircuitField::ZERO); n];
         for i in 0..n {
             for j in 0..p {
+                let b_ij = b[i * p + j];
                 if r[j] {
-                    let b_ij = b[i * p + j];
                     let b_sign = b_signs[i * p + j];
                     if b_sign {
                         br[i] = builder.add(br[i], b_ij);
                     } else {
                         br[i] = builder.sub(br[i], b_ij);
                     }
+                } else {
+                    let factor = builder.mul(zero_const, b_ij);
+                    br[i] = builder.add(br[i], factor);
                 }
             }
         }
@@ -117,13 +129,12 @@ pub fn verify_matmul<C: Config>(
 
                 // Compute magnitude
                 let prod = builder.mul(a_ik, br_k);
-                let scaled_prod = prod; // No need to scale, A*B is already scaled correctly
 
                 // Add or subtract based on sign
                 if a_sign {
-                    abr[i] = builder.add(abr[i], scaled_prod);
+                    abr[i] = builder.add(abr[i], prod);
                 } else {
-                    abr[i] = builder.sub(abr[i], scaled_prod);
+                    abr[i] = builder.sub(abr[i], prod);
                 }
             }
         }
@@ -143,7 +154,7 @@ pub fn verify_matmul<C: Config>(
 mod tests {
     use super::*;
     use expander_compiler::frontend::BN254Config;
-
+    const ONE: u64 = 1 << 16;
     #[test]
     fn test_verify_matmul() {
         // Create a simple circuit to test the verifier
@@ -185,26 +196,25 @@ mod tests {
         };
 
         let compile_result = compile::<BN254Config, TestCircuit<Variable>>(&circuit).unwrap();
-
         // Test correct multiplication with fixed-point scaling and signs
         let assignment = TestCircuit::<BN254> {
             a: vec![
-                BN254::from(1u32 * ONE), // +1
-                BN254::from(2u32 * ONE), // -2
-                BN254::from(3u32 * ONE), // +3
-                BN254::from(4u32 * ONE), // +4
+                BN254::from(1u64 * ONE), // +1
+                BN254::from(2u64 * ONE), // -2
+                BN254::from(3u64 * ONE), // +3
+                BN254::from(4u64 * ONE), // +4
             ],
             b: vec![
-                BN254::from(5u32 * ONE), // +5
-                BN254::from(6u32 * ONE), // +6
-                BN254::from(7u32 * ONE), // -7
-                BN254::from(8u32 * ONE), // +8
+                BN254::from(5u64 * ONE), // +5
+                BN254::from(6u64 * ONE), // +6
+                BN254::from(7u64 * ONE), // -7
+                BN254::from(8u64 * ONE), // +8
             ],
             c: vec![
-                BN254::from(19u32 * ONE), // +19
-                BN254::from(10u32 * ONE), // -10
-                BN254::from(13u32 * ONE), // -13
-                BN254::from(50u32 * ONE), // +50
+                BN254::from(19u64 * ONE), // +19
+                BN254::from(10u64 * ONE), // -10
+                BN254::from(13u64 * ONE), // -13
+                BN254::from(50u64 * ONE), // +50
             ],
         };
 
@@ -259,22 +269,22 @@ mod tests {
 
         let assignment = TestCircuit::<BN254> {
             a: vec![
-                BN254::from(1u32 * ONE),
-                BN254::from(2u32 * ONE),
-                BN254::from(3u32 * ONE),
-                BN254::from(4u32 * ONE),
+                BN254::from(1u64 * ONE),
+                BN254::from(2u64 * ONE),
+                BN254::from(3u64 * ONE),
+                BN254::from(4u64 * ONE),
             ],
             b: vec![
-                BN254::from(5u32 * ONE),
-                BN254::from(6u32 * ONE),
-                BN254::from(7u32 * ONE),
-                BN254::from(8u32 * ONE),
+                BN254::from(5u64 * ONE),
+                BN254::from(6u64 * ONE),
+                BN254::from(7u64 * ONE),
+                BN254::from(8u64 * ONE),
             ],
             c: vec![
-                BN254::from(19u32 * ONE),
-                BN254::from(22u32 * ONE),
-                BN254::from(43u32 * ONE),
-                BN254::from(50u32 * ONE),
+                BN254::from(19u64 * ONE),
+                BN254::from(22u64 * ONE),
+                BN254::from(43u64 * ONE),
+                BN254::from(50u64 * ONE),
             ],
         };
 
@@ -329,22 +339,22 @@ mod tests {
 
         let assignment = TestCircuit::<BN254> {
             a: vec![
-                BN254::from(1u32 * ONE),
-                BN254::from(2u32 * ONE),
-                BN254::from(3u32 * ONE),
-                BN254::from(4u32 * ONE),
+                BN254::from(1u64 * ONE),
+                BN254::from(2u64 * ONE),
+                BN254::from(3u64 * ONE),
+                BN254::from(4u64 * ONE),
             ],
             b: vec![
-                BN254::from(5u32 * ONE),
-                BN254::from(6u32 * ONE),
-                BN254::from(7u32 * ONE),
-                BN254::from(8u32 * ONE),
+                BN254::from(5u64 * ONE),
+                BN254::from(6u64 * ONE),
+                BN254::from(7u64 * ONE),
+                BN254::from(8u64 * ONE),
             ],
             c: vec![
-                BN254::from(9u32 * ONE),
-                BN254::from(10u32 * ONE),
-                BN254::from(13u32 * ONE),
-                BN254::from(14u32 * ONE),
+                BN254::from(9u64 * ONE),
+                BN254::from(10u64 * ONE),
+                BN254::from(13u64 * ONE),
+                BN254::from(14u64 * ONE),
             ],
         };
 
@@ -399,22 +409,22 @@ mod tests {
 
         let assignment = TestCircuit::<BN254> {
             a: vec![
-                BN254::from(1u32 * ONE),
-                BN254::from(2u32 * ONE),
-                BN254::from(3u32 * ONE),
-                BN254::from(4u32 * ONE),
+                BN254::from(1u64 * ONE),
+                BN254::from(2u64 * ONE),
+                BN254::from(3u64 * ONE),
+                BN254::from(4u64 * ONE),
             ],
             b: vec![
-                BN254::from(5u32 * ONE),
-                BN254::from(6u32 * ONE),
-                BN254::from(7u32 * ONE),
-                BN254::from(8u32 * ONE),
+                BN254::from(5u64 * ONE),
+                BN254::from(6u64 * ONE),
+                BN254::from(7u64 * ONE),
+                BN254::from(8u64 * ONE),
             ],
             c: vec![
-                BN254::from(19u32 * ONE),
-                BN254::from(22u32 * ONE),
-                BN254::from(43u32 * ONE),
-                BN254::from(50u32 * ONE),
+                BN254::from(19u64 * ONE),
+                BN254::from(22u64 * ONE),
+                BN254::from(43u64 * ONE),
+                BN254::from(50u64 * ONE),
             ],
         };
 
@@ -469,22 +479,22 @@ mod tests {
 
         let assignment = TestCircuit::<BN254> {
             a: vec![
-                BN254::from(1u32 * ONE),
-                BN254::from(2u32 * ONE),
-                BN254::from(3u32 * ONE),
-                BN254::from(4u32 * ONE),
+                BN254::from(1u64 * ONE),
+                BN254::from(2u64 * ONE),
+                BN254::from(3u64 * ONE),
+                BN254::from(4u64 * ONE),
             ],
             b: vec![
-                BN254::from(5u32 * ONE),
-                BN254::from(6u32 * ONE),
-                BN254::from(7u32 * ONE),
-                BN254::from(8u32 * ONE),
+                BN254::from(5u64 * ONE),
+                BN254::from(6u64 * ONE),
+                BN254::from(7u64 * ONE),
+                BN254::from(8u64 * ONE),
             ],
             c: vec![
-                BN254::from(19u32 * ONE),
-                BN254::from(22u32 * ONE),
-                BN254::from(43u32 * ONE),
-                BN254::from(50u32 * ONE),
+                BN254::from(19u64 * ONE),
+                BN254::from(22u64 * ONE),
+                BN254::from(43u64 * ONE),
+                BN254::from(50u64 * ONE),
             ],
         };
 
@@ -539,22 +549,22 @@ mod tests {
 
         let assignment = TestCircuit::<BN254> {
             a: vec![
-                BN254::from(1u32 * ONE),
-                BN254::from(2u32 * ONE),
-                BN254::from(3u32 * ONE),
-                BN254::from(4u32 * ONE),
+                BN254::from(1u64 * ONE),
+                BN254::from(2u64 * ONE),
+                BN254::from(3u64 * ONE),
+                BN254::from(4u64 * ONE),
             ],
             b: vec![
-                BN254::from(5u32 * ONE),
-                BN254::from(6u32 * ONE),
-                BN254::from(7u32 * ONE),
-                BN254::from(8u32 * ONE),
+                BN254::from(5u64 * ONE),
+                BN254::from(6u64 * ONE),
+                BN254::from(7u64 * ONE),
+                BN254::from(8u64 * ONE),
             ],
             c: vec![
-                BN254::from(19u32 * ONE),
-                BN254::from(22u32 * ONE),
-                BN254::from(43u32 * ONE),
-                BN254::from(50u32 * ONE),
+                BN254::from(19u64 * ONE),
+                BN254::from(22u64 * ONE),
+                BN254::from(43u64 * ONE),
+                BN254::from(50u64 * ONE),
             ],
         };
 

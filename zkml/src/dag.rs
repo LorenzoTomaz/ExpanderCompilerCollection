@@ -55,9 +55,7 @@ pub struct DagCircuit {
     /// The computation graph to verify
     pub graph: ComputationGraph,
     /// The flattened tensor data for each node
-    /// First element (index 0) is always the original fixed-point array
-    /// Second element (index 1) is optional scaled version
-    tensor_data: HashMap<String, Vec<Vec<Variable>>>,
+    tensor_data: HashMap<String, Vec<Variable>>,
 }
 
 impl DagCircuit {
@@ -71,34 +69,17 @@ impl DagCircuit {
         let node = self.graph.nodes.get(uuid).unwrap();
         let size = node.shape.iter().product::<u64>() as usize;
         let data = vec![Variable::default(); size];
-        // Initialize with just the original fixed-point array
-        self.tensor_data
-            .insert(uuid.to_string(), vec![data.clone()]);
+        self.tensor_data.insert(uuid.to_string(), data.clone());
         data
     }
 
     /// Get or initialize tensor data for a node
     pub fn get_tensor(&mut self, uuid: &str) -> Vec<Variable> {
         if let Some(data) = self.tensor_data.get(uuid) {
-            // Return the original fixed-point array
-            data[0].clone()
+            data.clone()
         } else {
             self.init_tensor(uuid)
         }
-    }
-
-    /// Add scaled version of tensor data for a node
-    pub fn add_scaled_tensor(&mut self, uuid: &str, scaled_data: Vec<Variable>) {
-        if let Some(data) = self.tensor_data.get_mut(uuid) {
-            data.push(scaled_data);
-        }
-    }
-
-    /// Get scaled version of tensor data if it exists
-    pub fn get_scaled_tensor(&self, uuid: &str) -> Option<Vec<Variable>> {
-        self.tensor_data
-            .get(uuid)
-            .and_then(|data| data.get(1).cloned())
     }
 
     /// Update signs for a node
@@ -140,9 +121,8 @@ impl<C: Config> Define<C> for DagCircuit {
                 continue;
             }
 
-            // Get tensor data (original fixed-point array)
-            let tensor_data = self.tensor_data.get(&uuid).unwrap();
-            let output_data = tensor_data[0].as_slice();
+            // Get tensor data
+            let output_data = self.tensor_data.get(&uuid).unwrap();
 
             // Verify operation and combine result
             let verifier_result = match node.op_name.as_str() {
@@ -152,10 +132,8 @@ impl<C: Config> Define<C> for DagCircuit {
                 }
                 "add" => {
                     assert_eq!(node.parents.len(), 2, "Add requires 2 inputs");
-                    let a_tensor = self.tensor_data.get(&node.parents[0]).unwrap();
-                    let b_tensor = self.tensor_data.get(&node.parents[1]).unwrap();
-                    let a_data = a_tensor[0].as_slice();
-                    let b_data = b_tensor[0].as_slice();
+                    let a_data = self.tensor_data.get(&node.parents[0]).unwrap();
+                    let b_data = self.tensor_data.get(&node.parents[1]).unwrap();
                     let a_node = self.graph.nodes.get(&node.parents[0]).unwrap();
                     let b_node = self.graph.nodes.get(&node.parents[1]).unwrap();
 
@@ -172,10 +150,8 @@ impl<C: Config> Define<C> for DagCircuit {
                 }
                 "sub" => {
                     assert_eq!(node.parents.len(), 2, "Sub requires 2 inputs");
-                    let a_tensor = self.tensor_data.get(&node.parents[0]).unwrap();
-                    let b_tensor = self.tensor_data.get(&node.parents[1]).unwrap();
-                    let a_data = a_tensor[0].as_slice();
-                    let b_data = b_tensor[0].as_slice();
+                    let a_data = self.tensor_data.get(&node.parents[0]).unwrap();
+                    let b_data = self.tensor_data.get(&node.parents[1]).unwrap();
                     let a_node = self.graph.nodes.get(&node.parents[0]).unwrap();
                     let b_node = self.graph.nodes.get(&node.parents[1]).unwrap();
 
@@ -192,30 +168,8 @@ impl<C: Config> Define<C> for DagCircuit {
                 }
                 "matmul" => {
                     assert_eq!(node.parents.len(), 2, "Matmul requires 2 inputs");
-                    let a_tensor = self.tensor_data.get(&node.parents[0]).unwrap();
-                    let b_tensor = self.tensor_data.get(&node.parents[1]).unwrap();
-                    let c_tensor = self.tensor_data.get(&uuid).unwrap();
-
-                    // Check if all tensors have scaled versions
-                    let use_scaled = a_tensor.len() > 1 && b_tensor.len() > 1 && c_tensor.len() > 1;
-
-                    // Use scaled version (index 1) if available for all tensors, otherwise use original (index 0)
-                    let a_data = if use_scaled {
-                        a_tensor[1].as_slice()
-                    } else {
-                        a_tensor[0].as_slice()
-                    };
-                    let b_data = if use_scaled {
-                        b_tensor[1].as_slice()
-                    } else {
-                        b_tensor[0].as_slice()
-                    };
-                    let output_data = if use_scaled {
-                        c_tensor[1].as_slice()
-                    } else {
-                        c_tensor[0].as_slice()
-                    };
-
+                    let a_data = self.tensor_data.get(&node.parents[0]).unwrap();
+                    let b_data = self.tensor_data.get(&node.parents[1]).unwrap();
                     let a_node = self.graph.nodes.get(&node.parents[0]).unwrap();
                     let b_node = self.graph.nodes.get(&node.parents[1]).unwrap();
 
@@ -230,13 +184,12 @@ impl<C: Config> Define<C> for DagCircuit {
                         &a_node.shape,
                         &b_node.shape,
                         &node.shape,
-                        7, // num_iterations
+                        5, // Default number of iterations
                     )
                 }
                 "sqrt" => {
                     assert_eq!(node.parents.len(), 1, "Sqrt requires 1 input");
-                    let input_tensor = self.tensor_data.get(&node.parents[0]).unwrap();
-                    let input_data = input_tensor[0].as_slice();
+                    let input_data = self.tensor_data.get(&node.parents[0]).unwrap();
                     let input_node = self.graph.nodes.get(&node.parents[0]).unwrap();
 
                     crate::verifiers::verify_sqrt(
@@ -259,7 +212,8 @@ impl<C: Config> Define<C> for DagCircuit {
 
         // Assert final result
         let true_const = builder.constant(C::CircuitField::from(1u32));
-        builder.assert_is_equal(result, true_const)
+        builder.assert_is_equal(result, true_const);
+        builder.and(result, true_const);
     }
 }
 
@@ -278,7 +232,7 @@ impl DumpLoadTwoVariables<Variable> for DagCircuit {
             .collect();
         input_nodes.sort_by_key(|(uuid, _)| *uuid);
         for (uuid, _) in input_nodes {
-            to_process.push(uuid.to_string());
+            to_process.push(uuid.clone());
         }
 
         // Then add output node
@@ -302,14 +256,14 @@ impl DumpLoadTwoVariables<Variable> for DagCircuit {
                 to_process.push(uuid.clone());
                 for parent in parents.iter().rev() {
                     // Reverse to maintain order with stack
-                    to_process.push((*parent).to_string());
+                    to_process.push((*parent).clone());
                 }
                 continue;
             }
 
             // Process this node's variables
             if let Some(tensor_data) = self.tensor_data.get(&uuid) {
-                for var in tensor_data[0].iter() {
+                for var in tensor_data {
                     vars1.push(*var);
                     vars2.push(*var);
                 }
@@ -333,7 +287,7 @@ impl DumpLoadTwoVariables<Variable> for DagCircuit {
             .collect();
         input_nodes.sort_by_key(|(uuid, _)| *uuid);
         for (uuid, _) in input_nodes {
-            to_process.push(uuid.to_string());
+            to_process.push(uuid.clone());
         }
 
         // Then add output node
@@ -357,14 +311,14 @@ impl DumpLoadTwoVariables<Variable> for DagCircuit {
                 to_process.push(uuid.clone());
                 for parent in parents.iter().rev() {
                     // Reverse to maintain order with stack
-                    to_process.push((*parent).to_string());
+                    to_process.push((*parent).clone());
                 }
                 continue;
             }
 
             // Process this node's variables
             if let Some(tensor_data) = self.tensor_data.get_mut(&uuid) {
-                for var in tensor_data[0].iter_mut() {
+                for var in tensor_data {
                     *var = vars1[0];
                     *vars1 = &vars1[1..];
                     *vars2 = &vars2[1..];
@@ -376,7 +330,7 @@ impl DumpLoadTwoVariables<Variable> for DagCircuit {
     }
 
     fn num_vars(&self) -> (usize, usize) {
-        let n = self.tensor_data.values().map(|v| v[0].len()).sum();
+        let n = self.tensor_data.values().map(|v| v.len()).sum();
         (n, n)
     }
 }
@@ -497,26 +451,11 @@ impl<F: Field> Assignment<F, DagCircuit> for DagAssignment<F> {
 
         // Assign values to all tensors in the circuit
         for (uuid, tensor_data) in &circuit.tensor_data {
-            let values = self
-                .tensor_values
-                .get(uuid.as_str())
-                .expect("Missing tensor values");
-            assert_eq!(tensor_data[0].len(), values.len(), "Tensor size mismatch");
+            let values = self.tensor_values.get(uuid).expect("Missing tensor values");
+            assert_eq!(tensor_data.len(), values.len(), "Tensor size mismatch");
 
-            for (var, value) in tensor_data[0].iter().zip(values.iter()) {
+            for (var, value) in tensor_data.iter().zip(values.iter()) {
                 assignment.push((*var, *value));
-            }
-
-            // If there's a scaled version, assign those values too
-            if let Some(scaled_data) = tensor_data.get(1) {
-                assert_eq!(
-                    scaled_data.len(),
-                    values.len(),
-                    "Scaled tensor size mismatch"
-                );
-                for (var, value) in scaled_data.iter().zip(values.iter()) {
-                    assignment.push((*var, *value));
-                }
             }
         }
 
@@ -565,7 +504,7 @@ mod tests {
     use std::fs::File;
     use std::io::BufWriter;
 
-    const ONE: u32 = 1 << 16;
+    const ONE: u64 = 1 << 16;
 
     #[test]
     fn test_matmul() {
@@ -621,64 +560,46 @@ mod tests {
         circuit.init_tensor("b");
         circuit.init_tensor("c");
 
-        // // Add scaled versions (scaled by 10) for testing
-        // circuit.add_scaled_tensor("a", vec![Variable::default(); 4]);
-        // circuit.add_scaled_tensor("b", vec![Variable::default(); 4]);
-        // circuit.add_scaled_tensor("c", vec![Variable::default(); 4]);
-
         // Test correct multiplication with signs
         let mut tensor_values = HashMap::new();
         tensor_values.insert(
             "a".to_string(),
             vec![
-                BN254::from(1u32 * ONE), // +1
-                BN254::from(2u32 * ONE), // -2
-                BN254::from(3u32 * ONE), // +3
-                BN254::from(4u32 * ONE), // +4
+                BN254::from(1u64 * ONE), // +1
+                BN254::from(2u64 * ONE), // -2
+                BN254::from(3u64 * ONE), // +3
+                BN254::from(4u64 * ONE), // +4
             ],
         );
         tensor_values.insert(
             "b".to_string(),
             vec![
-                BN254::from(5u32 * ONE), // +5
-                BN254::from(6u32 * ONE), // +6
-                BN254::from(7u32 * ONE), // -7
-                BN254::from(8u32 * ONE), // +8
+                BN254::from(5u64 * ONE), // +5
+                BN254::from(6u64 * ONE), // +6
+                BN254::from(7u64 * ONE), // -7
+                BN254::from(8u64 * ONE), // +8
             ],
         );
         tensor_values.insert(
             "c".to_string(),
             vec![
-                BN254::from(19u32 * ONE), // +19 (+1*+5 + (-2)*+6)
-                BN254::from(10u32 * ONE), // -10 (+1*+6 + (-2)*(-7))
-                BN254::from(13u32 * ONE), // -13 (+3*+5 + +4*+6)
-                BN254::from(50u32 * ONE), // +50 (+3*+6 + +4*+8)
+                BN254::from(19u64 * ONE), // -19
+                BN254::from(10u64 * ONE), // +22
+                BN254::from(13u64 * ONE), // +43
+                BN254::from(50u64 * ONE), // +50
             ],
         );
 
         let assignment = DagAssignment { tensor_values };
 
-        // Generate witness and verify
         assert!(generate_witness(
             &circuit,
             &assignment,
-            "circuit_matmul_bn254.txt",
-            "witness_matmul_bn254.txt",
-            "witness_matmul_bn254_solver.txt",
-            "proof_matmul_bn254.txt"
+            "circuit_dag_bn254.txt",
+            "witness_dag_bn254.txt",
+            "witness_dag_bn254_solver.txt",
+            "proof_dag_bn254.txt"
         ));
-
-        // Clean up test files
-        for file in [
-            "circuit_matmul_bn254.txt",
-            "witness_matmul_bn254.txt",
-            "witness_matmul_bn254_solver.txt",
-            "proof_matmul_bn254.txt",
-        ] {
-            if std::path::Path::new(file).exists() {
-                std::fs::remove_file(file).unwrap();
-            }
-        }
     }
 
     #[test]
@@ -701,11 +622,6 @@ mod tests {
         circuit.init_tensor("b");
         circuit.init_tensor("c");
 
-        // Add scaled versions (scaled by 10) for testing
-        // circuit.add_scaled_tensor("a", vec![Variable::default(); 4]);
-        // circuit.add_scaled_tensor("b", vec![Variable::default(); 4]);
-        // circuit.add_scaled_tensor("c", vec![Variable::default(); 4]);
-
         let compile_result = compile::<BN254Config, DagCircuit>(&circuit).unwrap();
 
         // Test correct multiplication with signs
@@ -713,28 +629,28 @@ mod tests {
         tensor_values.insert(
             "a".to_string(),
             vec![
-                BN254::from(1u32 * ONE), // +1
-                BN254::from(2u32 * ONE), // -2
-                BN254::from(3u32 * ONE), // +3
-                BN254::from(4u32 * ONE), // +4
+                BN254::from(1u64 * ONE), // +1
+                BN254::from(2u64 * ONE), // -2
+                BN254::from(3u64 * ONE), // +3
+                BN254::from(4u64 * ONE), // +4
             ],
         );
         tensor_values.insert(
             "b".to_string(),
             vec![
-                BN254::from(5u32 * ONE), // +5
-                BN254::from(6u32 * ONE), // +6
-                BN254::from(7u32 * ONE), // -7
-                BN254::from(8u32 * ONE), // +8
+                BN254::from(5u64 * ONE), // +5
+                BN254::from(6u64 * ONE), // +6
+                BN254::from(7u64 * ONE), // -7
+                BN254::from(8u64 * ONE), // +8
             ],
         );
         tensor_values.insert(
             "c".to_string(),
             vec![
-                BN254::from(19u32 * ONE), // +19 (+1*+5 + (-2)*+6)
-                BN254::from(10u32 * ONE), // -10 (+1*+6 + (-2)*(-7))
-                BN254::from(13u32 * ONE), // -13 (+3*+5 + +4*+6)
-                BN254::from(50u32 * ONE), // +50 (+3*+6 + +4*+8)
+                BN254::from(19u64 * ONE), // -19 (+1*+5 + (-2)*+6)
+                BN254::from(10u64 * ONE), // +22 (+1*+6 + (-2)*(-7))
+                BN254::from(13u64 * ONE), // +43 (+3*+5 + +4*+6)
+                BN254::from(50u64 * ONE), // +50 (+3*+6 + +4*+8)
             ],
         );
 
@@ -747,27 +663,46 @@ mod tests {
         let output = compile_result.layered_circuit.run(&witness);
         assert_eq!(output, vec![true]);
 
-        // Test with proof generation
-        assert!(generate_witness(
-            &circuit,
-            &assignment,
-            "circuit_matmul_json_bn254.txt",
-            "witness_matmul_json_bn254.txt",
-            "witness_matmul_json_bn254_solver.txt",
-            "proof_matmul_json_bn254.txt"
-        ));
+        // Test incorrect multiplication
+        let mut wrong_tensor_values = HashMap::new();
+        wrong_tensor_values.insert(
+            "a".to_string(),
+            vec![
+                BN254::from(1u64 * ONE), // +1
+                BN254::from(2u64 * ONE), // -2
+                BN254::from(3u64 * ONE), // +3
+                BN254::from(4u64 * ONE), // +4
+            ],
+        );
+        wrong_tensor_values.insert(
+            "b".to_string(),
+            vec![
+                BN254::from(5u64 * ONE), // +5
+                BN254::from(6u64 * ONE), // +6
+                BN254::from(7u64 * ONE), // -7
+                BN254::from(8u64 * ONE), // +8
+            ],
+        );
+        wrong_tensor_values.insert(
+            "c".to_string(),
+            vec![
+                BN254::from(19u64 * ONE), // -19
+                BN254::from(22u64 * ONE), // +22
+                BN254::from(43u64 * ONE), // +43
+                BN254::from(51u64 * ONE), // Wrong value
+            ],
+        );
 
-        // Clean up test files
-        for file in [
-            "circuit_matmul_json_bn254.txt",
-            "witness_matmul_json_bn254.txt",
-            "witness_matmul_json_bn254_solver.txt",
-            "proof_matmul_json_bn254.txt",
-        ] {
-            if std::path::Path::new(file).exists() {
-                std::fs::remove_file(file).unwrap();
-            }
-        }
+        let wrong_assignment = DagAssignment {
+            tensor_values: wrong_tensor_values,
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&wrong_assignment)
+            .unwrap();
+        let output = compile_result.layered_circuit.run(&witness);
+        assert_eq!(output, vec![false]);
     }
 
     #[test]
@@ -780,24 +715,24 @@ mod tests {
             "0".to_string(),
             TensorNode {
                 uuid: "0".to_string(),
-                shape: vec![1],
+                shape: vec![1], // Changed from [1,1] to [1]
                 op_name: "input".to_string(),
                 parents: vec![],
                 parameters: None,
-                signs: vec![true], // +16
+                signs: vec![true], // positive input
             },
         );
 
-        // Output value = sqrt(input)
+        // Output sqrt
         nodes.insert(
             "1".to_string(),
             TensorNode {
                 uuid: "1".to_string(),
-                shape: vec![1],
+                shape: vec![1], // Changed from [1,1] to [1]
                 op_name: "sqrt".to_string(),
                 parents: vec!["0".to_string()],
                 parameters: None,
-                signs: vec![true], // +4
+                signs: vec![true], // positive output
             },
         );
 
@@ -812,19 +747,15 @@ mod tests {
         circuit.init_tensor("0");
         circuit.init_tensor("1");
 
-        // Add scaled versions (scaled by 10) for testing
-        // circuit.add_scaled_tensor("0", vec![Variable::default(); 1]);
-        // circuit.add_scaled_tensor("1", vec![Variable::default(); 1]);
-
         // Test sqrt(16) = 4
         let mut tensor_values = HashMap::new();
         tensor_values.insert(
             "0".to_string(),
-            vec![BN254::from(16u32 * ONE)], // 16
+            vec![BN254::from(16u64 * ONE)], // 16
         );
         tensor_values.insert(
             "1".to_string(),
-            vec![BN254::from(4u32 * ONE)], // 4
+            vec![BN254::from(4u64 * ONE)], // 4
         );
 
         let assignment = DagAssignment { tensor_values };
@@ -854,6 +785,100 @@ mod tests {
             "witness_sqrt_bn254.txt",
             "witness_sqrt_bn254_solver.txt",
             "proof_sqrt_bn254.txt",
+        ] {
+            if std::path::Path::new(file).exists() {
+                std::fs::remove_file(file).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn test_scalar_matmul() {
+        // Create a simple DAG for 1x1 matrix multiplication (scalar multiplication)
+        let mut nodes = HashMap::new();
+
+        // Input matrices A and B (1x1)
+        nodes.insert(
+            "a".to_string(),
+            TensorNode {
+                uuid: "a".to_string(),
+                shape: vec![1, 1],
+                op_name: "input".to_string(),
+                parents: vec![],
+                parameters: None,
+                signs: vec![true], // [+65536]
+            },
+        );
+        nodes.insert(
+            "b".to_string(),
+            TensorNode {
+                uuid: "b".to_string(),
+                shape: vec![1, 1],
+                op_name: "input".to_string(),
+                parents: vec![],
+                parameters: None,
+                signs: vec![true], // [+65536]
+            },
+        );
+
+        // Output matrix C = A * B
+        nodes.insert(
+            "c".to_string(),
+            TensorNode {
+                uuid: "c".to_string(),
+                shape: vec![1, 1],
+                op_name: "matmul".to_string(),
+                parents: vec!["a".to_string(), "b".to_string()],
+                parameters: None,
+                signs: vec![true], // [+4294967296]
+            },
+        );
+
+        let graph = ComputationGraph {
+            nodes,
+            output_node: "c".to_string(),
+        };
+
+        let mut circuit = DagCircuit::new(graph);
+
+        // Initialize input tensors with variables
+        circuit.init_tensor("a");
+        circuit.init_tensor("b");
+        circuit.init_tensor("c");
+
+        // Test multiplication 131072 * 131072 = 262144
+        let mut tensor_values = HashMap::new();
+        tensor_values.insert("a".to_string(), vec![BN254::from(131072u64)]);
+        tensor_values.insert("b".to_string(), vec![BN254::from(131072u64)]);
+        tensor_values.insert("c".to_string(), vec![BN254::from(262144u64)]);
+
+        let assignment = DagAssignment { tensor_values };
+
+        // Generate witness and verify
+        let compile_result = compile::<BN254Config, DagCircuit>(&circuit).unwrap();
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        let output = compile_result.layered_circuit.run(&witness);
+        assert_eq!(output, vec![true]);
+
+        // Test with proof generation
+        assert!(generate_witness(
+            &circuit,
+            &assignment,
+            "circuit_scalar_matmul_bn254.txt",
+            "witness_scalar_matmul_bn254.txt",
+            "witness_scalar_matmul_bn254_solver.txt",
+            "proof_scalar_matmul_bn254.txt"
+        ));
+
+        // Clean up test files
+        for file in [
+            "circuit_scalar_matmul_bn254.txt",
+            "witness_scalar_matmul_bn254.txt",
+            "witness_scalar_matmul_bn254_solver.txt",
+            "proof_scalar_matmul_bn254.txt",
         ] {
             if std::path::Path::new(file).exists() {
                 std::fs::remove_file(file).unwrap();

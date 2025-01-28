@@ -57,7 +57,7 @@ mod tests {
     use expander_compiler::field::BN254;
     use expander_compiler::frontend::BN254Config;
 
-    const ONE: u32 = 1 << 16;
+    const ONE: u64 = 1 << 16;
 
     #[test]
     fn test_verify_tensor_sub() {
@@ -101,22 +101,22 @@ mod tests {
         // Test correct subtraction with signs
         let assignment = TestCircuit::<BN254> {
             input1: vec![
-                BN254::from(1u32 * ONE), // +1
-                BN254::from(2u32 * ONE), // -2
-                BN254::from(3u32 * ONE), // +3
-                BN254::from(4u32 * ONE), // -4
+                BN254::from(1u64 * ONE), // +1
+                BN254::from(2u64 * ONE), // -2
+                BN254::from(3u64 * ONE), // +3
+                BN254::from(4u64 * ONE), // -4
             ],
             input2: vec![
-                BN254::from(5u32 * ONE), // +5
-                BN254::from(6u32 * ONE), // +6
-                BN254::from(7u32 * ONE), // -7
-                BN254::from(8u32 * ONE), // -8
+                BN254::from(5u64 * ONE), // +5
+                BN254::from(6u64 * ONE), // +6
+                BN254::from(7u64 * ONE), // -7
+                BN254::from(8u64 * ONE), // -8
             ],
             output: vec![
-                BN254::from(4u32 * ONE),  // -4
-                BN254::from(8u32 * ONE),  // -8
-                BN254::from(10u32 * ONE), // +10
-                BN254::from(4u32 * ONE),  // +4
+                BN254::from(4u64 * ONE),  // -4
+                BN254::from(8u64 * ONE),  // -8
+                BN254::from(10u64 * ONE), // +10
+                BN254::from(4u64 * ONE),  // +4
             ],
         };
 
@@ -130,22 +130,22 @@ mod tests {
         // Test incorrect subtraction
         let wrong_assignment = TestCircuit::<BN254> {
             input1: vec![
-                BN254::from(1u32 * ONE), // +1
-                BN254::from(2u32 * ONE), // -2
-                BN254::from(3u32 * ONE), // +3
-                BN254::from(4u32 * ONE), // -4
+                BN254::from(1u64 * ONE), // +1
+                BN254::from(2u64 * ONE), // -2
+                BN254::from(3u64 * ONE), // +3
+                BN254::from(4u64 * ONE), // -4
             ],
             input2: vec![
-                BN254::from(5u32 * ONE), // +5
-                BN254::from(6u32 * ONE), // +6
-                BN254::from(7u32 * ONE), // -7
-                BN254::from(8u32 * ONE), // -8
+                BN254::from(5u64 * ONE), // +5
+                BN254::from(6u64 * ONE), // +6
+                BN254::from(7u64 * ONE), // -7
+                BN254::from(8u64 * ONE), // -8
             ],
             output: vec![
-                BN254::from(4u32 * ONE),  // -4
-                BN254::from(8u32 * ONE),  // -8
-                BN254::from(10u32 * ONE), // +10
-                BN254::from(5u32 * ONE),  // Wrong value
+                BN254::from(4u64 * ONE),  // -4
+                BN254::from(8u64 * ONE),  // -8
+                BN254::from(10u64 * ONE), // +10
+                BN254::from(5u64 * ONE),  // Wrong value
             ],
         };
 
@@ -196,22 +196,22 @@ mod tests {
 
         let assignment = TestCircuit::<BN254> {
             input1: vec![
-                BN254::from(1u32 * ONE),
-                BN254::from(2u32 * ONE),
-                BN254::from(3u32 * ONE),
-                BN254::from(4u32 * ONE),
+                BN254::from(1u64 * ONE),
+                BN254::from(2u64 * ONE),
+                BN254::from(3u64 * ONE),
+                BN254::from(4u64 * ONE),
             ],
             input2: vec![
-                BN254::from(2u32 * ONE),
-                BN254::from(4u32 * ONE),
-                BN254::from(6u32 * ONE),
-                BN254::from(8u32 * ONE),
+                BN254::from(2u64 * ONE),
+                BN254::from(4u64 * ONE),
+                BN254::from(6u64 * ONE),
+                BN254::from(8u64 * ONE),
             ],
             output: vec![
-                BN254::from(1u32 * ONE), // -1 (1-2)
-                BN254::from(2u32 * ONE), // -2 (2-4)
-                BN254::from(3u32 * ONE), // -3 (3-6)
-                BN254::from(4u32 * ONE), // -4 (4-8)
+                BN254::from(1u64 * ONE), // -1 (1-2)
+                BN254::from(2u64 * ONE), // -2 (2-4)
+                BN254::from(3u64 * ONE), // -3 (3-6)
+                BN254::from(4u64 * ONE), // -4 (4-8)
             ],
         };
 
@@ -262,22 +262,22 @@ mod tests {
 
         let assignment = TestCircuit::<BN254> {
             input1: vec![
-                BN254::from(5u32 * ONE), // -5
-                BN254::from(6u32 * ONE), // -6
-                BN254::from(7u32 * ONE), // -7
-                BN254::from(8u32 * ONE), // -8
+                BN254::from(5u64 * ONE), // -5
+                BN254::from(6u64 * ONE), // -6
+                BN254::from(7u64 * ONE), // -7
+                BN254::from(8u64 * ONE), // -8
             ],
             input2: vec![
-                BN254::from(2u32 * ONE), // -2
-                BN254::from(3u32 * ONE), // -3
-                BN254::from(4u32 * ONE), // -4
-                BN254::from(5u32 * ONE), // -5
+                BN254::from(2u64 * ONE), // -2
+                BN254::from(3u64 * ONE), // -3
+                BN254::from(4u64 * ONE), // -4
+                BN254::from(5u64 * ONE), // -5
             ],
             output: vec![
-                BN254::from(3u32 * ONE), // -3 (-5-(-2))
-                BN254::from(3u32 * ONE), // -3 (-6-(-3))
-                BN254::from(3u32 * ONE), // -3 (-7-(-4))
-                BN254::from(3u32 * ONE), // -3 (-8-(-5))
+                BN254::from(3u64 * ONE), // -3 (-5-(-2))
+                BN254::from(3u64 * ONE), // -3 (-6-(-3))
+                BN254::from(3u64 * ONE), // -3 (-7-(-4))
+                BN254::from(3u64 * ONE), // -3 (-8-(-5))
             ],
         };
 
@@ -328,22 +328,22 @@ mod tests {
 
         let assignment = TestCircuit::<BN254> {
             input1: vec![
-                BN254::from(5u32 * ONE), // +5
-                BN254::from(3u32 * ONE), // +3
-                BN254::from(5u32 * ONE), // -5
-                BN254::from(3u32 * ONE), // -3
+                BN254::from(5u64 * ONE), // +5
+                BN254::from(3u64 * ONE), // +3
+                BN254::from(5u64 * ONE), // -5
+                BN254::from(3u64 * ONE), // -3
             ],
             input2: vec![
-                BN254::from(5u32 * ONE), // +5
-                BN254::from(3u32 * ONE), // +3
-                BN254::from(5u32 * ONE), // -5
-                BN254::from(3u32 * ONE), // -3
+                BN254::from(5u64 * ONE), // +5
+                BN254::from(3u64 * ONE), // +3
+                BN254::from(5u64 * ONE), // -5
+                BN254::from(3u64 * ONE), // -3
             ],
             output: vec![
-                BN254::from(0u32 * ONE),
-                BN254::from(0u32 * ONE),
-                BN254::from(0u32 * ONE),
-                BN254::from(0u32 * ONE),
+                BN254::from(0u64 * ONE),
+                BN254::from(0u64 * ONE),
+                BN254::from(0u64 * ONE),
+                BN254::from(0u64 * ONE),
             ],
         };
 
@@ -394,22 +394,22 @@ mod tests {
 
         let assignment = TestCircuit::<BN254> {
             input1: vec![
-                BN254::from(1000u32 * ONE),
-                BN254::from(2000u32 * ONE),
-                BN254::from(3000u32 * ONE),
-                BN254::from(4000u32 * ONE),
+                BN254::from(1000u64 * ONE),
+                BN254::from(2000u64 * ONE),
+                BN254::from(3000u64 * ONE),
+                BN254::from(4000u64 * ONE),
             ],
             input2: vec![
-                BN254::from(2000u32 * ONE),
-                BN254::from(3000u32 * ONE),
-                BN254::from(4000u32 * ONE),
-                BN254::from(5000u32 * ONE),
+                BN254::from(2000u64 * ONE),
+                BN254::from(3000u64 * ONE),
+                BN254::from(4000u64 * ONE),
+                BN254::from(5000u64 * ONE),
             ],
             output: vec![
-                BN254::from(1000u32 * ONE), // -1000
-                BN254::from(1000u32 * ONE), // -1000
-                BN254::from(1000u32 * ONE), // -1000
-                BN254::from(1000u32 * ONE), // -1000
+                BN254::from(1000u64 * ONE), // -1000
+                BN254::from(1000u64 * ONE), // -1000
+                BN254::from(1000u64 * ONE), // -1000
+                BN254::from(1000u64 * ONE), // -1000
             ],
         };
 
@@ -460,22 +460,22 @@ mod tests {
 
         let assignment = TestCircuit::<BN254> {
             input1: vec![
-                BN254::from(5u32 * ONE), // +5
-                BN254::from(6u32 * ONE), // -6
-                BN254::from(7u32 * ONE), // +7
-                BN254::from(8u32 * ONE), // -8
+                BN254::from(5u64 * ONE), // +5
+                BN254::from(6u64 * ONE), // -6
+                BN254::from(7u64 * ONE), // +7
+                BN254::from(8u64 * ONE), // -8
             ],
             input2: vec![
-                BN254::from(2u32 * ONE), // -2
-                BN254::from(3u32 * ONE), // +3
-                BN254::from(4u32 * ONE), // -4
-                BN254::from(5u32 * ONE), // +5
+                BN254::from(2u64 * ONE), // -2
+                BN254::from(3u64 * ONE), // +3
+                BN254::from(4u64 * ONE), // -4
+                BN254::from(5u64 * ONE), // +5
             ],
             output: vec![
-                BN254::from(7u32 * ONE),  // +7 (5-(-2))
-                BN254::from(9u32 * ONE),  // -9 (-6-3)
-                BN254::from(11u32 * ONE), // +11 (7-(-4))
-                BN254::from(13u32 * ONE), // -13 (-8-5)
+                BN254::from(7u64 * ONE),  // +7 (5-(-2))
+                BN254::from(9u64 * ONE),  // -9 (-6-3)
+                BN254::from(11u64 * ONE), // +11 (7-(-4))
+                BN254::from(13u64 * ONE), // -13 (-8-5)
             ],
         };
 

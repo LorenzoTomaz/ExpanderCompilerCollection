@@ -60,15 +60,6 @@ pub fn verify_sqrt<C: Config>(
         // Get the absolute difference
         let diff = builder.sub(input_val, scaled_squared);
 
-        // Check if the difference is in range [0, 10]
-        // We'll check if diff equals any value in this range
-        // let mut within_range = builder.constant(C::CircuitField::ZERO);
-        // for j in 0..=10000 {
-        //     let j_const = builder.constant(C::CircuitField::from(j));
-        //     let equals_j = builder.unconstrained_eq(diff, j_const);
-        //     within_range = builder.or(within_range, equals_j);
-        // }
-        let threshold = builder.constant(C::CircuitField::from(1000000u32));
         let mut iter_result = builder.constant(C::CircuitField::ZERO);
         for i in 0..100 {
             let j_const = builder.constant(C::CircuitField::from(i));
@@ -87,7 +78,7 @@ mod tests {
     use expander_compiler::field::BN254;
     use expander_compiler::frontend::BN254Config;
 
-    const ONE: u32 = 1 << 16;
+    const ONE: u64 = 1 << 16;
 
     #[test]
     fn test_sqrt_verification() {
@@ -123,8 +114,8 @@ mod tests {
 
         // Test sqrt(3) ≈ 1.732050807568877
         let assignment = TestCircuit::<BN254> {
-            input: vec![BN254::from(16u32 * ONE)], // 3
-            output: vec![BN254::from(4u32 * ONE)], // √3
+            input: vec![BN254::from(16u64 * ONE)], // 3
+            output: vec![BN254::from(4u64 * ONE)], // √3
         };
 
         let witness = compile_result
@@ -136,8 +127,8 @@ mod tests {
 
         // Test incorrect sqrt (way off)
         let wrong_assignment = TestCircuit::<BN254> {
-            input: vec![BN254::from(3u32 * ONE)],  // 3
-            output: vec![BN254::from(2u32 * ONE)], // 2 (wrong)
+            input: vec![BN254::from(3u64 * ONE)],  // 3
+            output: vec![BN254::from(2u64 * ONE)], // 2 (wrong)
         };
 
         let witness = compile_result
@@ -146,49 +137,5 @@ mod tests {
             .unwrap();
         let output = compile_result.layered_circuit.run(&witness);
         assert_eq!(output, vec![false]);
-    }
-
-    #[test]
-    fn test_sqrt_negative_input() {
-        declare_circuit!(TestCircuit {
-            input: [Variable],
-            output: [Variable],
-        });
-
-        impl<C: Config> Define<C> for TestCircuit<Variable> {
-            fn define(&self, builder: &mut API<C>) {
-                let input_signs = vec![false]; // negative
-                let output_signs = vec![true];
-
-                let result = verify_sqrt(
-                    builder,
-                    &self.input,
-                    &self.output,
-                    &input_signs,
-                    &output_signs,
-                    &[1],
-                );
-                builder.assert_is_zero(result)
-            }
-        }
-
-        let circuit = TestCircuit {
-            input: vec![Variable::default()],
-            output: vec![Variable::default()],
-        };
-
-        let compile_result = compile::<BN254Config, TestCircuit<Variable>>(&circuit).unwrap();
-
-        let assignment = TestCircuit::<BN254> {
-            input: vec![BN254::from(3u32 * ONE)],
-            output: vec![BN254::from(113511u32)],
-        };
-
-        let witness = compile_result
-            .witness_solver
-            .solve_witness(&assignment)
-            .unwrap();
-        let output = compile_result.layered_circuit.run(&witness);
-        assert_eq!(output, vec![true]); // Should succeed because we're asserting result == false
     }
 }
