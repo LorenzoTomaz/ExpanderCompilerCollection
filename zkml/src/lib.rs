@@ -36,6 +36,13 @@ impl PyDagCircuit {
         Ok(())
     }
 
+    fn add_scaled_tensor(&mut self, uuid: &str, size: usize) -> PyResult<()> {
+        use expander_compiler::frontend::Variable;
+        let scaled_data = vec![Variable::default(); size];
+        self.inner.add_scaled_tensor(uuid, scaled_data);
+        Ok(())
+    }
+
     fn generate_witness(
         &mut self,
         tensor_values: &PyDict,
