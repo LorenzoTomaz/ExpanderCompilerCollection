@@ -2,18 +2,15 @@ use arith::Field;
 use arith::FieldSerde;
 use expander_compiler::circuit::layered::witness::Witness;
 use expander_compiler::circuit::layered::Circuit;
+use expander_compiler::circuit::layered::NormalInputType;
 use expander_compiler::field::BN254;
 use expander_compiler::frontend::internal::DumpLoadTwoVariables;
 use expander_compiler::frontend::Variable;
 use expander_compiler::frontend::*;
-use expander_compiler::frontend::{compile, BN254Config};
-use expander_config::{self, BN254ConfigKeccak};
-use gkr::{self, Prover, Verifier};
 use internal::Serde;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fs;
 use std::fs::File;
 use std::io::BufWriter;
 
@@ -351,6 +348,7 @@ pub fn generate_witness(
         .unwrap();
     let output = compile_result.layered_circuit.run(&witness);
     assert_eq!(output, vec![true]);
+
     // Generate witness files
     let file = File::create(circuit_path).unwrap();
     let writer = BufWriter::new(file);
@@ -373,7 +371,34 @@ pub fn generate_witness(
     println!("Witness files generated successfully");
 
     // Generate and verify proof
-    generate_and_verify_proof(&compile_result.layered_circuit, &witness, proof_path)
+    let mut expander_circuit = compile_result
+        .layered_circuit
+        .export_to_expander::<<expander_compiler::frontend::BN254Config as expander_compiler::frontend::Config>::DefaultGKRFieldConfig>()
+        .flatten();
+    let config = expander_config::Config::<<expander_compiler::frontend::BN254Config as expander_compiler::frontend::Config>::DefaultGKRConfig>::new(
+        expander_config::GKRScheme::Vanilla,
+        mpi_config::MPIConfig::new(),
+    );
+
+    let (simd_input, simd_public_input) = witness.to_simd::<<expander_compiler::frontend::BN254Config as expander_compiler::frontend::Config>::DefaultSimdField>();
+    expander_circuit.layers[0].input_vals = simd_input;
+    expander_circuit.public_input = simd_public_input.clone();
+
+    // Prove
+    expander_circuit.evaluate();
+    let (claimed_v, proof) = gkr::executor::prove(&mut expander_circuit, &config);
+
+    // Save proof to file
+    let file = File::create(proof_path).unwrap();
+    let writer = BufWriter::new(file);
+    proof.serialize_into(writer).unwrap();
+
+    // Verify
+    let result = gkr::executor::verify(&mut expander_circuit, &config, &proof, &claimed_v);
+    println!("Expander proof generated and verified successfully");
+    assert_eq!(result, true);
+    println!("{}", compile_result.layered_circuit);
+    result
 }
 
 /// Generate proof from existing witness files
@@ -386,38 +411,26 @@ pub fn generate_proof_from_files(
     // Load circuit and witness from files
     let circuit_file = File::open(circuit_path).unwrap();
     let witness_file = File::open(witness_path).unwrap();
-    let layered_circuit = Circuit::<BN254Config>::deserialize_from(circuit_file).unwrap();
+    let layered_circuit =
+        Circuit::<BN254Config, NormalInputType>::deserialize_from(circuit_file).unwrap();
     let witness = Witness::<BN254Config>::deserialize_from(witness_file).unwrap();
 
     // Generate and verify proof
-    generate_and_verify_proof(&layered_circuit, &witness, proof_path)
-}
-
-/// Generate and verify proof for a circuit
-pub fn generate_and_verify_proof(
-    layered_circuit: &Circuit<BN254Config>,
-    witness: &Witness<BN254Config>,
-    proof_path: &str,
-) -> bool {
-    // Generate expander proof
-    type GKRConfig = expander_config::BN254ConfigKeccak;
-    let mut expander_circuit = layered_circuit.export_to_expander::<GKRConfig>().flatten();
-
-    let config = expander_config::Config::<GKRConfig>::new(
+    let mut expander_circuit = layered_circuit
+        .export_to_expander::<<expander_compiler::frontend::BN254Config as expander_compiler::frontend::Config>::DefaultGKRFieldConfig>()
+        .flatten();
+    let config = expander_config::Config::<<expander_compiler::frontend::BN254Config as expander_compiler::frontend::Config>::DefaultGKRConfig>::new(
         expander_config::GKRScheme::Vanilla,
-        expander_config::MPIConfig::new(),
+        mpi_config::MPIConfig::new(),
     );
 
-    let (simd_input, simd_public_input) =
-        witness.to_simd::<<GKRConfig as expander_config::GKRConfig>::SimdCircuitField>();
+    let (simd_input, simd_public_input) = witness.to_simd::<<expander_compiler::frontend::BN254Config as expander_compiler::frontend::Config>::DefaultSimdField>();
     expander_circuit.layers[0].input_vals = simd_input;
     expander_circuit.public_input = simd_public_input.clone();
 
     // Prove
     expander_circuit.evaluate();
-    let mut prover = gkr::Prover::new(&config);
-    prover.prepare_mem(&expander_circuit);
-    let (claimed_v, proof) = prover.prove(&mut expander_circuit);
+    let (claimed_v, proof) = gkr::executor::prove(&mut expander_circuit, &config);
 
     // Save proof to file
     let file = File::create(proof_path).unwrap();
@@ -425,13 +438,39 @@ pub fn generate_and_verify_proof(
     proof.serialize_into(writer).unwrap();
 
     // Verify
-    let verifier = gkr::Verifier::new(&config);
-    let result = verifier.verify(
-        &mut expander_circuit,
-        &simd_public_input,
-        &claimed_v,
-        &proof,
+    gkr::executor::verify(&mut expander_circuit, &config, &proof, &claimed_v)
+}
+
+/// Generate and verify proof for a circuit
+pub fn generate_and_verify_proof(
+    layered_circuit: &Circuit<BN254Config, NormalInputType>,
+    witness: &Witness<BN254Config>,
+    proof_path: &str,
+) -> bool {
+    // Generate expander proof
+    let mut expander_circuit = layered_circuit
+        .export_to_expander::<<expander_compiler::frontend::BN254Config as expander_compiler::frontend::Config>::DefaultGKRFieldConfig>()
+        .flatten();
+    let config = expander_config::Config::<<expander_compiler::frontend::BN254Config as expander_compiler::frontend::Config>::DefaultGKRConfig>::new(
+        expander_config::GKRScheme::Vanilla,
+        mpi_config::MPIConfig::new(),
     );
+
+    let (simd_input, simd_public_input) = witness.to_simd::<<expander_compiler::frontend::BN254Config as expander_compiler::frontend::Config>::DefaultSimdField>();
+    expander_circuit.layers[0].input_vals = simd_input;
+    expander_circuit.public_input = simd_public_input.clone();
+
+    // Prove
+    expander_circuit.evaluate();
+    let (claimed_v, proof) = gkr::executor::prove(&mut expander_circuit, &config);
+
+    // Save proof to file
+    let file = File::create(proof_path).unwrap();
+    let writer = BufWriter::new(file);
+    proof.serialize_into(writer).unwrap();
+
+    // Verify
+    let result = gkr::executor::verify(&mut expander_circuit, &config, &proof, &claimed_v);
 
     println!("Expander proof generated and verified successfully");
     assert_eq!(result, true);
@@ -500,9 +539,7 @@ mod tests {
     use super::*;
     use expander_compiler::field::BN254;
     use expander_compiler::frontend::{compile, BN254Config};
-    use internal::Serde;
-    use std::fs::File;
-    use std::io::BufWriter;
+    use std::fs;
 
     const ONE: u64 = 1 << 16;
 

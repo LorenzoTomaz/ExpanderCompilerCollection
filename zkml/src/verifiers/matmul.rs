@@ -147,6 +147,7 @@ pub fn verify_matmul<C: Config>(
             result = builder.and(result, iter_result);
         }
     }
+    builder.display("value", result);
     result
 }
 
@@ -184,6 +185,7 @@ mod tests {
                     7,       // num_iterations
                 );
                 let true_const = builder.constant(C::CircuitField::from(1u32));
+                builder.display("value", result);
                 builder.assert_is_equal(result, true_const);
             }
         }

@@ -13,8 +13,6 @@ pub use dag::{
     TensorNode,
 };
 
-use expander_compiler::frontend::compile;
-
 #[pyclass]
 struct PyDagCircuit {
     inner: DagCircuit,
