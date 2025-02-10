@@ -342,27 +342,27 @@ fn verify_fft_internal<C: Config, Builder: RootAPI<C>>(
 ) -> Variable {
     let size: usize = shape.iter().product::<u64>() as usize;
     println!("size: {}", size);
-    // assert_eq!(
-    //     input.len(),
-    //     size * 2,
-    //     "Input tensor size must match shape * 2 (complex numbers)"
-    // );
-    // assert_eq!(
-    //     output.len(),
-    //     size * 2,
-    //     "Output tensor size must match shape * 2 (complex numbers)"
-    // );
-    // assert_eq!(
-    //     input_signs.len(),
-    //     size * 2,
-    //     "Input signs length must match shape * 2"
-    // );
-    // assert_eq!(
-    //     output_signs.len(),
-    //     size * 2,
-    //     "Output signs length must match shape * 2"
-    // );
-    // assert!(size.is_power_of_two(), "Size must be a power of 2");
+    assert_eq!(
+        input.len(),
+        size * 2,
+        "Input tensor size must match shape * 2 (complex numbers)"
+    );
+    assert_eq!(
+        output.len(),
+        size * 2,
+        "Output tensor size must match shape * 2 (complex numbers)"
+    );
+    assert_eq!(
+        input_signs.len(),
+        size * 2,
+        "Input signs length must match shape * 2"
+    );
+    assert_eq!(
+        output_signs.len(),
+        size * 2,
+        "Output signs length must match shape * 2"
+    );
+    assert!(size.is_power_of_two(), "Size must be a power of 2");
 
     // Constants
     let one = builder.constant(C::CircuitField::from(1u32 << 16)); // 2^16 for fixed-point
