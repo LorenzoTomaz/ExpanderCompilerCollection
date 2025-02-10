@@ -1,6 +1,9 @@
-use arith::Field;
+use arith::{BN254Fr, Field};
+use expander_compiler::field::BN254;
 use expander_compiler::frontend::extra::*;
+use expander_compiler::frontend::internal::DumpLoadTwoVariables;
 use expander_compiler::frontend::*;
+
 /// Helper struct to represent a complex number in the circuit
 struct ComplexVar {
     real: Variable,
@@ -63,85 +66,101 @@ fn complex_add<C: Config, Builder: RootAPI<C>>(
 
     // Add real parts
     let real = {
-        let real_signs_eq = builder.unconstrained_eq(a.real_sign, b.real_sign);
-        let imag_signs_eq = builder.unconstrained_eq(a.imag_sign, b.imag_sign);
-        let signs_same = builder.unconstrained_eq(real_signs_eq, imag_signs_eq);
-
+        let signs_same = builder.unconstrained_eq(a.real_sign, b.real_sign);
+        builder.display("signs_same", signs_same);
         // Same signs path: just add and keep sign
         let sum = builder.add(a.real, b.real);
+        builder.display("sum", sum);
         let same_signs_result = (sum, a.real_sign);
 
         // Different signs path: subtract and check if result > 2^31
         let max_val = builder.constant(C::CircuitField::from(1u32 << 31));
         let diff = builder.sub(a.real, b.real);
-
-        // Check if result > 2^31
+        builder.display("diff", diff);
         let is_large = builder.unconstrained_lesser(max_val, diff);
+        builder.display("is_large", is_large);
         let should_negate = builder.unconstrained_eq(is_large, one);
+        builder.display("should_negate", should_negate);
         let one_minus_should = builder.unconstrained_not_eq(should_negate, one);
-
-        // Compute both possibilities and select based on should_negate
+        builder.display("one_minus_should", one_minus_should);
+        // Compute magnitude
         let neg_result = builder.neg(diff);
+        builder.display("neg_result", neg_result);
         let pos_term = builder.mul(diff, one_minus_should);
+        builder.display("pos_term", pos_term);
         let neg_term = builder.mul(neg_result, should_negate);
+        builder.display("neg_term", neg_term);
         let result = builder.add(pos_term, neg_term);
-
-        // Sign is determined by whether we negated
-        let sign = builder.unconstrained_eq(should_negate, zero);
+        builder.display("result", result);
+        // Sign should be b's sign when |a| < |b| and a's sign when |a| > |b|
+        let sign = builder.unconstrained_eq(is_large, b.real_sign);
+        builder.display("sign", sign);
         let diff_signs_result = (result, sign);
-
         // Select between same signs and different signs paths
         let one_minus_signs_same = builder.sub(one, signs_same);
+        builder.display("one_minus_signs_same", one_minus_signs_same);
         let diff_term = builder.mul(diff_signs_result.0, one_minus_signs_same);
+        builder.display("diff_term", diff_term);
         let final_mag = builder.mul(same_signs_result.0, signs_same);
+        builder.display("final_mag", final_mag);
         let final_mag = builder.add(final_mag, diff_term);
-
+        builder.display("final_mag", final_mag);
         let sign_term = builder.mul(diff_signs_result.1, one_minus_signs_same);
+        builder.display("sign_term", sign_term);
         let final_sign = builder.mul(same_signs_result.1, signs_same);
+        builder.display("final_sign", final_sign);
         let final_sign = builder.add(final_sign, sign_term);
-
+        builder.display("final_sign", final_sign);
         (final_mag, final_sign)
     };
 
     // Add imaginary parts (same logic as real parts)
     let imag = {
-        let real_signs_eq = builder.unconstrained_eq(a.real_sign, b.real_sign);
-        let imag_signs_eq = builder.unconstrained_eq(a.imag_sign, b.imag_sign);
-        let signs_same = builder.unconstrained_eq(real_signs_eq, imag_signs_eq);
-
+        let signs_same = builder.unconstrained_eq(a.imag_sign, b.imag_sign);
+        builder.display("signs_same_imag", signs_same);
         // Same signs path: just add and keep sign
         let sum = builder.add(a.imag, b.imag);
+        builder.display("sum_imag", sum);
         let same_signs_result = (sum, a.imag_sign);
 
         // Different signs path: subtract and check if result > 2^31
         let max_val = builder.constant(C::CircuitField::from(1u32 << 31));
         let diff = builder.sub(a.imag, b.imag);
-
-        // Check if result > 2^31
+        builder.display("diff_imag", diff);
         let is_large = builder.unconstrained_lesser(max_val, diff);
+        builder.display("is_large_imag", is_large);
         let should_negate = builder.unconstrained_eq(is_large, one);
+        builder.display("should_negate_imag", should_negate);
         let one_minus_should = builder.unconstrained_not_eq(should_negate, one);
-
-        // Compute both possibilities and select based on should_negate
+        builder.display("one_minus_should_imag", one_minus_should);
+        // Compute magnitude
         let neg_result = builder.neg(diff);
+        builder.display("neg_result_imag", neg_result);
         let pos_term = builder.mul(diff, one_minus_should);
+        builder.display("pos_term_imag", pos_term);
         let neg_term = builder.mul(neg_result, should_negate);
+        builder.display("neg_term_imag", neg_term);
         let result = builder.add(pos_term, neg_term);
-
-        // Sign is determined by whether we negated
-        let sign = builder.unconstrained_eq(should_negate, zero);
+        builder.display("result_imag", result);
+        // Sign should be b's sign when |a| < |b| and a's sign when |a| > |b|
+        let sign = builder.unconstrained_eq(is_large, b.imag_sign);
+        builder.display("sign_imag", sign);
         let diff_signs_result = (result, sign);
-
         // Select between same signs and different signs paths
         let one_minus_signs_same = builder.sub(one, signs_same);
+        builder.display("one_minus_signs_same_imag", one_minus_signs_same);
         let diff_term = builder.mul(diff_signs_result.0, one_minus_signs_same);
+        builder.display("diff_term_imag", diff_term);
         let final_mag = builder.mul(same_signs_result.0, signs_same);
+        builder.display("final_mag_imag", final_mag);
         let final_mag = builder.add(final_mag, diff_term);
-
+        builder.display("final_mag_imag", final_mag);
         let sign_term = builder.mul(diff_signs_result.1, one_minus_signs_same);
+        builder.display("sign_term_imag", sign_term);
         let final_sign = builder.mul(same_signs_result.1, signs_same);
+        builder.display("final_sign_imag", final_sign);
         let final_sign = builder.add(final_sign, sign_term);
-
+        builder.display("final_sign_imag", final_sign);
         (final_mag, final_sign)
     };
 
@@ -233,48 +252,81 @@ fn complex_mul<C: Config, Builder: RootAPI<C>>(
 
     // Real part: ac - bd
     let real = {
-        let real_signs_eq = builder.unconstrained_eq(a.real_sign, b.real_sign);
-        let imag_signs_eq = builder.unconstrained_eq(a.imag_sign, b.imag_sign);
-        let signs_same = builder.unconstrained_eq(real_signs_eq, imag_signs_eq);
+        // Create ComplexVar for ac term
+        builder.display("a.real_sign", a.real_sign);
+        builder.display("b.real_sign", b.real_sign);
+        builder.display("a.imag_sign", a.imag_sign);
+        builder.display("b.imag_sign", b.imag_sign);
+        builder.display("ac_scaled", ac_scaled);
+        builder.display("bd_scaled", bd_scaled);
+        let ac_sign = builder.unconstrained_not_eq(a.real_sign, b.real_sign);
+        builder.display("ac_sign", ac_sign);
+        let ac_term = ComplexVar {
+            real: ac_scaled,
+            imag: builder.constant(C::CircuitField::ZERO),
+            real_sign: ac_sign,
+            imag_sign: builder.constant(C::CircuitField::ZERO),
+        };
 
-        // Signs are same, subtract magnitudes
-        let diff = builder.sub(ac_scaled, bd_scaled);
-        let sum = builder.add(ac_scaled, bd_scaled);
+        // + + -> -
+        // + - -> +
+        // - + -> +
+        // - - -> -
+        // Create ComplexVar for -bd term (note the negation via sign flip)
+        let zero = builder.constant(C::CircuitField::ZERO);
+        let mul_bd_sign = builder.unconstrained_not_eq(a.imag_sign, b.imag_sign); // flip sign because of addition
+        builder.display("bd_xor_sign", mul_bd_sign);
+        let bd_sign = builder.unconstrained_not_eq(mul_bd_sign, one_const);
+        builder.display("bd_sign", bd_sign);
 
-        // Use arithmetic to select: signs_same * diff + (1-signs_same) * sum
-        let one = builder.constant(C::CircuitField::from(1u32));
-        let not_signs_same = builder.sub(one, signs_same);
-        let diff_term = builder.mul(signs_same, diff);
-        let sum_term = builder.mul(not_signs_same, sum);
-        let mag = builder.add(diff_term, sum_term);
+        let bd_term = ComplexVar {
+            real: bd_scaled,
+            imag: zero,
+            real_sign: bd_sign, // Negate bd by flipping sign
+            imag_sign: zero,
+        };
 
-        // Compute sign: XOR of input signs
-        let real_sign = builder.unconstrained_eq(real_signs_eq, one_const);
-
-        (mag, real_sign)
+        // Use complex_add to compute ac + (-bd)
+        let result = complex_add(builder, &ac_term, &bd_term);
+        builder.display("result.real", result.real);
+        builder.display("result.real_sign", result.real_sign);
+        (result.real, result.real_sign)
     };
 
     // Imaginary part: ad + bc
     let imag = {
-        let real_signs_eq = builder.unconstrained_eq(a.real_sign, b.imag_sign);
-        let imag_signs_eq = builder.unconstrained_eq(a.imag_sign, b.real_sign);
-        let signs_same = builder.unconstrained_eq(real_signs_eq, imag_signs_eq);
+        builder.display("a.real_sign", a.real_sign);
+        builder.display("b.imag_sign", b.imag_sign);
+        builder.display("a.imag_sign", a.imag_sign);
+        builder.display("b.real_sign", b.real_sign);
+        builder.display("ad_scaled", ad_scaled);
+        builder.display("bc_scaled", bc_scaled);
 
-        // Signs are same, add magnitudes
-        let sum = builder.add(ad_scaled, bc_scaled);
-        let diff = builder.sub(ad_scaled, bc_scaled);
+        // Create ComplexVar for ad term
+        let ad_sign = builder.unconstrained_not_eq(a.real_sign, b.imag_sign);
+        builder.display("ad_sign", ad_sign);
+        let ad_term = ComplexVar {
+            real: ad_scaled,
+            imag: builder.constant(C::CircuitField::ZERO),
+            real_sign: ad_sign,
+            imag_sign: builder.constant(C::CircuitField::ZERO),
+        };
 
-        // Use arithmetic to select: signs_same * sum + (1-signs_same) * diff
-        let one = builder.constant(C::CircuitField::from(1u32));
-        let not_signs_same = builder.sub(one, signs_same);
-        let sum_term = builder.mul(signs_same, sum);
-        let diff_term = builder.mul(not_signs_same, diff);
-        let mag = builder.add(sum_term, diff_term);
+        // Create ComplexVar for bc term
+        let bc_sign = builder.unconstrained_not_eq(a.imag_sign, b.real_sign);
+        builder.display("bc_sign", bc_sign);
+        let bc_term = ComplexVar {
+            real: bc_scaled,
+            imag: builder.constant(C::CircuitField::ZERO),
+            real_sign: bc_sign,
+            imag_sign: builder.constant(C::CircuitField::ZERO),
+        };
 
-        // Compute sign: XOR of input signs
-        let imag_sign = builder.unconstrained_eq(real_signs_eq, one_const);
-
-        (mag, imag_sign)
+        // Use complex_add to compute ad + bc
+        let result = complex_add(builder, &ad_term, &bc_term);
+        builder.display("result.real", result.real);
+        builder.display("result.real_sign", result.real_sign);
+        (result.real, result.real_sign)
     };
 
     ComplexVar::new(real.0, imag.0, real.1, imag.1)
@@ -559,7 +611,31 @@ mod tests {
     use expander_compiler::field::BN254;
     use expander_compiler::frontend::BN254Config;
 
-    const ONE: u64 = 1 << 16;
+    const ONE: u32 = 1 << 16;
+
+    declare_circuit!(TestCircuit {
+        input: [Variable],
+        output: [Variable],
+        roots: [Variable],
+    });
+
+    // impl DumpLoadTwoVariables<BN254Fr> for TestCircuit<BN254Fr> {
+    //     fn dump_into(&self, vars: &mut Vec<BN254Fr>, public_vars: &mut Vec<BN254Fr>) {
+    //         vars.extend_from_slice(&self.input);
+    //         public_vars.extend_from_slice(&self.output);
+    //     }
+
+    //     fn load_from(&mut self, vars: &mut &[BN254Fr], public_vars: &mut &[BN254Fr]) {
+    //         self.input.copy_from_slice(&vars[..2]);
+    //         *vars = &vars[2..];
+    //         self.output.copy_from_slice(&public_vars[..2]);
+    //         *public_vars = &public_vars[2..];
+    //     }
+
+    //     fn num_vars(&self) -> (usize, usize) {
+    //         (2, 2)
+    //     }
+    // }
 
     #[test]
     fn test_verify_fft_size_1() {
@@ -593,7 +669,7 @@ mod tests {
         }
 
         let circuit = TestCircuit {
-            input: vec![Variable::default(); 2], // Real and imaginary parts
+            input: vec![Variable::default(); 2],
             output: vec![Variable::default(); 2],
             roots: vec![Variable::default(); 2],
         };
@@ -625,162 +701,837 @@ mod tests {
             .solve_witness(&assignment)
             .unwrap();
         let output = compile_result.layered_circuit.run(&witness);
-        //assert_eq!(output, vec![true]);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+        assert_eq!(output, vec![true]);
     }
 
-    // #[test]
-    // fn test_verify_fft_size_2() {
-    //     declare_circuit!(TestCircuit {
-    //         input: [Variable],
-    //         output: [Variable],
-    //         roots: [Variable],
-    //     });
+    #[test]
+    fn test_complex_add_positive() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
 
-    //     impl<C: Config> Define<C> for TestCircuit<Variable> {
-    //         fn define(&self, builder: &mut API<C>) {
-    //             let input_signs = vec![true, true, true, true]; // Signs for real,imag parts
-    //             let output_signs = vec![true, true, true, true];
-    //             let root_signs = vec![true, true, true, true, true, true]; // Signs for complex roots
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 1 + 0i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                );
+                let result = complex_add(builder, &a, &b);
+                let zero = builder.constant(C::CircuitField::ZERO);
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, zero);
+                builder.assert_is_equal(result.imag_sign, zero);
+            }
+        }
 
-    //             let result = verify_fft(
-    //                 builder,
-    //                 &self.input,
-    //                 &self.output,
-    //                 &input_signs,
-    //                 &output_signs,
-    //                 &self.roots,
-    //                 &root_signs,
-    //                 &[2],
-    //                 0,
-    //             );
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
 
-    //             let true_const = builder.constant(C::CircuitField::from(1u32));
-    //             builder.assert_is_equal(result, true_const);
-    //         }
-    //     }
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
 
-    //     let circuit = TestCircuit {
-    //         input: vec![Variable::default(); 4], // 2 complex numbers
-    //         output: vec![Variable::default(); 4],
-    //         roots: vec![Variable::default(); 6], // 3 complex roots
-    //     };
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(ONE),     // Real part = 2^16
+                BN254Fr::from(0u32),    // Imaginary part = 0
+                BN254Fr::from(2 * ONE), // Real part = 2^16
+                BN254Fr::from(ONE),     // Imaginary part = 0
+            ],
+            output: vec![
+                BN254Fr::from(3 * ONE), // Real part = 2^16
+                BN254Fr::from(ONE),     // Imaginary part = 0
+            ],
+        };
 
-    //     let compile_result = compile::<BN254Config, TestCircuit<Variable>>(&circuit).unwrap();
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
 
-    //     // Test with input [1+0i, 1+0i] -> FFT -> [2+0i, 0+0i]
-    //     let assignment = TestCircuit::<BN254> {
-    //         input: vec![
-    //             BN254::from(1u64 * ONE),
-    //             BN254::from(0u64), // 1+0i
-    //             BN254::from(1u64 * ONE),
-    //             BN254::from(0u64), // 1+0i
-    //         ],
-    //         output: vec![
-    //             BN254::from(2u64 * ONE),
-    //             BN254::from(0u64), // 2+0i
-    //             BN254::from(0u64),
-    //             BN254::from(0u64), // 0+0i
-    //         ],
-    //         roots: vec![
-    //             BN254::from(123u64),
-    //             BN254::from(0u64), // Random value for linear combination
-    //             BN254::from(u64::MAX),
-    //             BN254::from(0u64), // -1+0i as root of unity
-    //             BN254::from(1u64),
-    //             BN254::from(0u64), // 1+0i for recursion
-    //         ],
-    //     };
+    #[test]
+    fn test_complex_add_positive_negative_a_less_than_b() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
 
-    //     let witness = compile_result
-    //         .witness_solver
-    //         .solve_witness(&assignment)
-    //         .unwrap();
-    //     let output = compile_result.layered_circuit.run(&witness);
-    //     assert_eq!(output, vec![true]);
-    // }
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 1 + 0i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(1u32)),
+                    builder.constant(C::CircuitField::from(1u32)),
+                ); // -2 + 0i
+                let result = complex_add(builder, &a, &b);
+                let one = builder.constant(C::CircuitField::from(1u32));
 
-    // #[test]
-    // fn test_verify_fft_size_4() {
-    //     declare_circuit!(TestCircuit {
-    //         input: [Variable],
-    //         output: [Variable],
-    //         roots: [Variable],
-    //     });
+                builder.display("result.real", result.real);
+                builder.display("result.imag", result.imag);
+                builder.display("result.real_sign", result.real_sign);
+                builder.display("result.imag_sign", result.imag_sign);
+                builder.display("expected_real", self.output[0]);
+                builder.display("expected_imag", self.output[1]);
+                builder.display("expected_real_sign", one);
+                builder.display("expected_imag_sign", one);
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, one);
+                builder.assert_is_equal(result.imag_sign, one);
+            }
+        }
 
-    //     impl<C: Config> Define<C> for TestCircuit<Variable> {
-    //         fn define(&self, builder: &mut API<C>) {
-    //             let input_signs = vec![true; 8]; // Signs for 4 complex numbers
-    //             let output_signs = vec![true; 8];
-    //             let root_signs = vec![true; 12]; // Signs for 6 complex roots
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
 
-    //             let result = verify_fft(
-    //                 builder,
-    //                 &self.input,
-    //                 &self.output,
-    //                 &input_signs,
-    //                 &output_signs,
-    //                 &self.roots,
-    //                 &root_signs,
-    //                 &[4],
-    //                 0,
-    //             );
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
 
-    //             let true_const = builder.constant(C::CircuitField::from(1u32));
-    //             builder.assert_is_equal(result, true_const);
-    //         }
-    //     }
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(ONE),     // Real part = 1
+                BN254Fr::from(ONE),     // Imaginary part = 1
+                BN254Fr::from(2 * ONE), // Real part = -2
+                BN254Fr::from(2 * ONE), // Imaginary part = 2
+            ],
+            output: vec![
+                BN254Fr::from(ONE), // Real part = 1 (1-(-2))
+                BN254Fr::from(ONE), // Imaginary part = 1 (1-(-2))
+            ],
+        };
 
-    //     let circuit = TestCircuit {
-    //         input: vec![Variable::default(); 8], // 4 complex numbers
-    //         output: vec![Variable::default(); 8],
-    //         roots: vec![Variable::default(); 12], // 6 complex roots
-    //     };
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
+    #[test]
+    fn test_complex_add_negative_positive_a_less_than_b() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
 
-    //     let compile_result = compile::<BN254Config, TestCircuit<Variable>>(&circuit).unwrap();
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(1u32)),
+                    builder.constant(C::CircuitField::from(1u32)),
+                ); // 1 + 0i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // -2 + 0i
+                let result = complex_add(builder, &a, &b);
+                let one = builder.constant(C::CircuitField::from(1u32));
+                let zero = builder.constant(C::CircuitField::ZERO);
+                builder.display("result.real", result.real);
+                builder.display("result.imag", result.imag);
+                builder.display("result.real_sign", result.real_sign);
+                builder.display("result.imag_sign", result.imag_sign);
+                builder.display("expected_real", self.output[0]);
+                builder.display("expected_imag", self.output[1]);
+                builder.display("expected_real_sign", zero);
+                builder.display("expected_imag_sign", zero);
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, zero);
+                builder.assert_is_equal(result.imag_sign, zero);
+            }
+        }
 
-    //     // Test with input [1+0i, 1+0i, 1+0i, 1+0i] -> FFT -> [4+0i, 0+0i, 0+0i, 0+0i]
-    //     let assignment = TestCircuit::<BN254> {
-    //         input: vec![
-    //             BN254::from(1u64 * ONE),
-    //             BN254::from(0u64),
-    //             BN254::from(1u64 * ONE),
-    //             BN254::from(0u64),
-    //             BN254::from(1u64 * ONE),
-    //             BN254::from(0u64),
-    //             BN254::from(1u64 * ONE),
-    //             BN254::from(0u64),
-    //         ],
-    //         output: vec![
-    //             BN254::from(4u64 * ONE),
-    //             BN254::from(0u64),
-    //             BN254::from(0u64),
-    //             BN254::from(0u64),
-    //             BN254::from(0u64),
-    //             BN254::from(0u64),
-    //             BN254::from(0u64),
-    //             BN254::from(0u64),
-    //         ],
-    //         roots: vec![
-    //             BN254::from(123u64),
-    //             BN254::from(0u64), // Random for first linear combination
-    //             BN254::from((1u64 << 32) - 1),
-    //             BN254::from(0u64), // First primitive 4th root
-    //             BN254::from((1u64 << 16) - 1),
-    //             BN254::from(0u64), // Second primitive 4th root
-    //             BN254::from(456u64),
-    //             BN254::from(0u64), // Random for second linear combination
-    //             BN254::from(u64::MAX),
-    //             BN254::from(0u64), // -1 as root of unity
-    //             BN254::from(1u64),
-    //             BN254::from(0u64), // Additional root
-    //         ],
-    //     };
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
 
-    //     let witness = compile_result
-    //         .witness_solver
-    //         .solve_witness(&assignment)
-    //         .unwrap();
-    //     let output = compile_result.layered_circuit.run(&witness);
-    //     assert_eq!(output, vec![true]);
-    // }
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
+
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(2 * ONE), // Real part = -2
+                BN254Fr::from(2 * ONE), // Imaginary part = 1
+                BN254Fr::from(6 * ONE), // Real part = 6
+                BN254Fr::from(6 * ONE), // Imaginary part = 2
+            ],
+            output: vec![
+                BN254Fr::from(4 * ONE), // Real part = 4 (-2+6)
+                BN254Fr::from(4 * ONE), // Imaginary part = 2 (1+1)
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
+    #[test]
+    fn test_complex_add_positive_negative_a_greater_than_b() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
+
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 1 + 0i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(1u32)),
+                    builder.constant(C::CircuitField::from(1u32)),
+                ); // -2 + 0i
+                let result = complex_add(builder, &a, &b);
+                let zero = builder.constant(C::CircuitField::ZERO);
+                let one = builder.constant(C::CircuitField::from(1u32));
+
+                builder.display("result.real", result.real);
+                builder.display("result.imag", result.imag);
+                builder.display("result.real_sign", result.real_sign);
+                builder.display("result.imag_sign", result.imag_sign);
+                builder.display("expected_real", self.output[0]);
+                builder.display("expected_imag", self.output[1]);
+                builder.display("expected_real_sign", one);
+                builder.display("expected_imag_sign", zero);
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, zero);
+                builder.assert_is_equal(result.imag_sign, zero);
+            }
+        }
+
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
+
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
+
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(2 * ONE), // Real part = 2
+                BN254Fr::from(3 * ONE), // Imaginary part = 3
+                BN254Fr::from(ONE),     // Real part = -1
+                BN254Fr::from(2 * ONE), // Imaginary part = 2
+            ],
+            output: vec![
+                BN254Fr::from(ONE), // Real part = 1 (2-(-1))
+                BN254Fr::from(ONE), // Imaginary part = 1 (3-(-2))
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
+
+    #[test]
+    fn test_complex_add_negative() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
+
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(1u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // -1 + 0i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(1u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // -1 + 0i
+                let result = complex_add(builder, &a, &b);
+                let zero = builder.constant(C::CircuitField::ZERO);
+                let one = builder.constant(C::CircuitField::from(1u32));
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, one);
+                builder.assert_is_equal(result.imag_sign, zero);
+            }
+        }
+
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
+
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
+
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(ONE),  // Real part = 2^16
+                BN254Fr::from(0u32), // Imaginary part = 0
+                BN254Fr::from(ONE),  // Real part = 2^16
+                BN254Fr::from(0u32), // Imaginary part = 0
+            ],
+            output: vec![
+                BN254Fr::from(2 * ONE), // Real part = 2^16
+                BN254Fr::from(0u32),    // Imaginary part = 0
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
+
+    #[test]
+    fn test_complex_sub_positive() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
+
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 2 + 3i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(1u32)), // inverse sign because we are using the add ops instead of sub ops
+                    builder.constant(C::CircuitField::from(1u32)),
+                ); // 1 + 2i
+                let result = complex_add(builder, &a, &b);
+                let zero = builder.constant(C::CircuitField::ZERO);
+
+                builder.display("result.real", result.real);
+                builder.display("result.imag", result.imag);
+                builder.display("result.real_sign", result.real_sign);
+                builder.display("result.imag_sign", result.imag_sign);
+                builder.display("expected_real", self.output[0]);
+                builder.display("expected_imag", self.output[1]);
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, zero);
+                builder.assert_is_equal(result.imag_sign, zero);
+            }
+        }
+
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
+
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
+
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(2 * ONE), // Real part = 2
+                BN254Fr::from(3 * ONE), // Imaginary part = 3
+                BN254Fr::from(ONE),     // Real part = 1
+                BN254Fr::from(2 * ONE), // Imaginary part = 2
+            ],
+            output: vec![
+                BN254Fr::from(ONE), // Real part = 1 (2-1)
+                BN254Fr::from(ONE), // Imaginary part = 1 (3-2)
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
+
+    #[test]
+    fn test_complex_sub_positive_negative_a_less_than_b() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
+
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 1 + i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(0u32)), // inverse sign because we are using the add ops instead of sub ops
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // -2 - 2i
+                let result = complex_add(builder, &a, &b);
+                let zero = builder.constant(C::CircuitField::ZERO);
+
+                builder.display("result.real", result.real);
+                builder.display("result.imag", result.imag);
+                builder.display("result.real_sign", result.real_sign);
+                builder.display("result.imag_sign", result.imag_sign);
+                builder.display("expected_real", self.output[0]);
+                builder.display("expected_imag", self.output[1]);
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, zero);
+                builder.assert_is_equal(result.imag_sign, zero);
+            }
+        }
+
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
+
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
+
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(ONE),     // Real part = 1
+                BN254Fr::from(ONE),     // Imaginary part = 1
+                BN254Fr::from(2 * ONE), // Real part = -2
+                BN254Fr::from(2 * ONE), // Imaginary part = -2
+            ],
+            output: vec![
+                BN254Fr::from(3 * ONE), // Real part = 3 (1-(-2))
+                BN254Fr::from(3 * ONE), // Imaginary part = 3 (1-(-2))
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
+
+    #[test]
+    fn test_complex_sub_positive_negative_a_greater_than_b() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
+
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 2 + 3i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(0u32)), // inverse sign because we are using the add ops instead of sub ops
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // -1 - 2i
+                let result = complex_add(builder, &a, &b);
+                let zero = builder.constant(C::CircuitField::ZERO);
+
+                builder.display("result.real", result.real);
+                builder.display("result.imag", result.imag);
+                builder.display("result.real_sign", result.real_sign);
+                builder.display("result.imag_sign", result.imag_sign);
+                builder.display("expected_real", self.output[0]);
+                builder.display("expected_imag", self.output[1]);
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, zero);
+                builder.assert_is_equal(result.imag_sign, zero);
+            }
+        }
+
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
+
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
+
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(2 * ONE), // Real part = 2
+                BN254Fr::from(3 * ONE), // Imaginary part = 3
+                BN254Fr::from(ONE),     // Real part = -1
+                BN254Fr::from(2 * ONE), // Imaginary part = -2
+            ],
+            output: vec![
+                BN254Fr::from(3 * ONE), // Real part = 3 (2-(-1))
+                BN254Fr::from(5 * ONE), // Imaginary part = 5 (3-(-2))
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
+
+    #[test]
+    fn test_complex_mul_positive() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
+
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 2 + 3i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 1 + 2i
+                let one_scaled = builder.constant(C::CircuitField::from(ONE));
+                let result = complex_mul(builder, &a, &b, one_scaled);
+                let zero = builder.constant(C::CircuitField::ZERO);
+                let one = builder.constant(C::CircuitField::from(1u32));
+                builder.display("result.real", result.real);
+                builder.display("result.imag", result.imag);
+                builder.display("result.real_sign", result.real_sign);
+                builder.display("result.imag_sign", result.imag_sign);
+                builder.display("expected_real", self.output[0]);
+                builder.display("expected_imag", self.output[1]);
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, one);
+                builder.assert_is_equal(result.imag_sign, zero);
+            }
+        }
+
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
+
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
+
+        // (2 + 3i)(1 + 2i) = (2 - 6) + (3 + 2)i = -4 + 5i
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(2 * ONE), // Real part = 2
+                BN254Fr::from(3 * ONE), // Imaginary part = 3
+                BN254Fr::from(ONE),     // Real part = 1
+                BN254Fr::from(2 * ONE), // Imaginary part = 2
+            ],
+            output: vec![
+                BN254Fr::from(4 * ONE), // Real part = -4 (2*1 - 3*2)
+                BN254Fr::from(7 * ONE), // Imaginary part = 7 (2*2 + 3*1)
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
+
+    #[test]
+    fn test_complex_mul_mixed_signs() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
+
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(1u32)),
+                ); // 2 - 3i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(1u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // -1 + 2i
+                let one = builder.constant(C::CircuitField::from(ONE));
+                let result = complex_mul(builder, &a, &b, one);
+                let zero = builder.constant(C::CircuitField::ZERO);
+                let one_const = builder.constant(C::CircuitField::from(1u32));
+
+                builder.display("result.real", result.real);
+                builder.display("result.imag", result.imag);
+                builder.display("result.real_sign", result.real_sign);
+                builder.display("result.imag_sign", result.imag_sign);
+                builder.display("expected_real", self.output[0]);
+                builder.display("expected_imag", self.output[1]);
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, zero);
+                builder.assert_is_equal(result.imag_sign, zero);
+            }
+        }
+
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
+
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
+
+        // (2 - 3i)(-1 + 2i) = (-2 + 3i)(1 - 2i) = (-2 + 6) + (3 + 4)i = 4 + 7i
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(2 * ONE), // Real part = 2
+                BN254Fr::from(3 * ONE), // Imaginary part = -3
+                BN254Fr::from(ONE),     // Real part = -1
+                BN254Fr::from(2 * ONE), // Imaginary part = 2
+            ],
+            output: vec![
+                BN254Fr::from(4 * ONE), // Real part = 4 (2*(-1) - (-3)*2)
+                BN254Fr::from(7 * ONE), // Imaginary part = 7 (2*2 + (-3)*(-1))
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
+
+    #[test]
+    fn test_complex_mul_pure_imaginary() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
+
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 0 + 2i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 0 + 3i
+                let one = builder.constant(C::CircuitField::from(ONE));
+                let result = complex_mul(builder, &a, &b, one);
+                let zero = builder.constant(C::CircuitField::ZERO);
+                let one_const = builder.constant(C::CircuitField::from(1u32));
+
+                builder.display("result.real", result.real);
+                builder.display("result.imag", result.imag);
+                builder.display("result.real_sign", result.real_sign);
+                builder.display("result.imag_sign", result.imag_sign);
+                builder.display("expected_real", self.output[0]);
+                builder.display("expected_imag", self.output[1]);
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, one_const);
+                builder.assert_is_equal(result.imag_sign, zero);
+            }
+        }
+
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
+
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
+
+        // (2i)(3i) = -6
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(0u32),    // Real part = 0
+                BN254Fr::from(2 * ONE), // Imaginary part = 2
+                BN254Fr::from(0u32),    // Real part = 0
+                BN254Fr::from(3 * ONE), // Imaginary part = 3
+            ],
+            output: vec![
+                BN254Fr::from(6 * ONE), // Real part = -6 (0*0 - 2*3)
+                BN254Fr::from(0u32),    // Imaginary part = 0 (0*3 + 2*0)
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
+
+    #[test]
+    fn test_complex_mul_zero() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+        });
+
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let a = ComplexVar::new(
+                    self.input[0],
+                    self.input[1],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 2 + 3i
+                let b = ComplexVar::new(
+                    self.input[2],
+                    self.input[3],
+                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(0u32)),
+                ); // 0 + 0i
+                let one = builder.constant(C::CircuitField::from(ONE));
+                let result = complex_mul(builder, &a, &b, one);
+                let zero = builder.constant(C::CircuitField::ZERO);
+
+                builder.display("result.real", result.real);
+                builder.display("result.imag", result.imag);
+                builder.display("result.real_sign", result.real_sign);
+                builder.display("result.imag_sign", result.imag_sign);
+                builder.display("expected_real", self.output[0]);
+                builder.display("expected_imag", self.output[1]);
+                builder.assert_is_equal(result.real, self.output[0]);
+                builder.assert_is_equal(result.imag, self.output[1]);
+                builder.assert_is_equal(result.real_sign, zero);
+                builder.assert_is_equal(result.imag_sign, zero);
+            }
+        }
+
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],
+            output: vec![Variable::default(); 2],
+        };
+
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
+
+        // (2 + 3i)(0 + 0i) = 0
+        let assignment = TestCircuit::<BN254Fr> {
+            input: vec![
+                BN254Fr::from(2 * ONE), // Real part = 2
+                BN254Fr::from(3 * ONE), // Imaginary part = 3
+                BN254Fr::from(0u32),    // Real part = 0
+                BN254Fr::from(0u32),    // Imaginary part = 0
+            ],
+            output: vec![
+                BN254Fr::from(0u32), // Real part = 0
+                BN254Fr::from(0u32), // Imaginary part = 0
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+    }
 }
