@@ -1,8 +1,7 @@
-use arith::{BN254Fr, Field};
-use expander_compiler::field::BN254;
-use expander_compiler::frontend::extra::*;
-use expander_compiler::frontend::internal::DumpLoadTwoVariables;
+use arith::Field;
 use expander_compiler::frontend::*;
+
+const CUTOFF_PRIME: u32 = 4294967291u32; // 2^32 - 5
 
 /// Helper struct to represent a complex number in the circuit
 struct ComplexVar {
@@ -60,170 +59,113 @@ fn complex_add<C: Config, Builder: RootAPI<C>>(
     builder: &mut Builder,
     a: &ComplexVar,
     b: &ComplexVar,
+    subtract: bool,
 ) -> ComplexVar {
     let one = builder.constant(C::CircuitField::from(1u32));
-    let zero = builder.constant(C::CircuitField::ZERO);
-
+    let mut signed_b = ComplexVar::new(b.real, b.imag, b.real_sign, b.imag_sign);
+    if subtract {
+        signed_b.real_sign = builder.unconstrained_not_eq(signed_b.real_sign, one);
+        signed_b.imag_sign = builder.unconstrained_not_eq(signed_b.imag_sign, one);
+    }
     // Add real parts
     let real = {
-        let signs_same = builder.unconstrained_eq(a.real_sign, b.real_sign);
-        builder.display("signs_same", signs_same);
+        let signs_same = builder.unconstrained_eq(a.real_sign, signed_b.real_sign);
+        // builder.display("signs_same", signs_same);
         // Same signs path: just add and keep sign
-        let sum = builder.add(a.real, b.real);
-        builder.display("sum", sum);
+        let sum = builder.add(a.real, signed_b.real);
+        // builder.display("sum", sum);
         let same_signs_result = (sum, a.real_sign);
 
         // Different signs path: subtract and check if result > 2^31
         let max_val = builder.constant(C::CircuitField::from(1u32 << 31));
-        let diff = builder.sub(a.real, b.real);
-        builder.display("diff", diff);
+        let diff = builder.sub(a.real, signed_b.real);
+        // builder.display("diff", diff);
         let is_large = builder.unconstrained_lesser(max_val, diff);
-        builder.display("is_large", is_large);
+        // builder.display("is_large", is_large);
         let should_negate = builder.unconstrained_eq(is_large, one);
-        builder.display("should_negate", should_negate);
+        // builder.display("should_negate", should_negate);
         let one_minus_should = builder.unconstrained_not_eq(should_negate, one);
-        builder.display("one_minus_should", one_minus_should);
+        // builder.display("one_minus_should", one_minus_should);
         // Compute magnitude
         let neg_result = builder.neg(diff);
-        builder.display("neg_result", neg_result);
+        // builder.display("neg_result", neg_result);
         let pos_term = builder.mul(diff, one_minus_should);
-        builder.display("pos_term", pos_term);
+        // builder.display("pos_term", pos_term);
         let neg_term = builder.mul(neg_result, should_negate);
-        builder.display("neg_term", neg_term);
+        // builder.display("neg_term", neg_term);
         let result = builder.add(pos_term, neg_term);
-        builder.display("result", result);
+        // builder.display("result", result);
         // Sign should be b's sign when |a| < |b| and a's sign when |a| > |b|
-        let sign = builder.unconstrained_eq(is_large, b.real_sign);
-        builder.display("sign", sign);
+        let sign = builder.unconstrained_eq(is_large, signed_b.real_sign);
+        // builder.display("sign", sign);
         let diff_signs_result = (result, sign);
         // Select between same signs and different signs paths
         let one_minus_signs_same = builder.sub(one, signs_same);
-        builder.display("one_minus_signs_same", one_minus_signs_same);
+        // builder.display("one_minus_signs_same", one_minus_signs_same);
         let diff_term = builder.mul(diff_signs_result.0, one_minus_signs_same);
-        builder.display("diff_term", diff_term);
+        // builder.display("diff_term", diff_term);
         let final_mag = builder.mul(same_signs_result.0, signs_same);
-        builder.display("final_mag", final_mag);
+        // builder.display("final_mag", final_mag);
         let final_mag = builder.add(final_mag, diff_term);
-        builder.display("final_mag", final_mag);
+        // builder.display("final_mag", final_mag);
         let sign_term = builder.mul(diff_signs_result.1, one_minus_signs_same);
-        builder.display("sign_term", sign_term);
+        // builder.display("sign_term", sign_term);
         let final_sign = builder.mul(same_signs_result.1, signs_same);
-        builder.display("final_sign", final_sign);
+        // builder.display("final_sign", final_sign);
         let final_sign = builder.add(final_sign, sign_term);
-        builder.display("final_sign", final_sign);
+        // builder.display("final_sign", final_sign);
         (final_mag, final_sign)
     };
 
     // Add imaginary parts (same logic as real parts)
     let imag = {
-        let signs_same = builder.unconstrained_eq(a.imag_sign, b.imag_sign);
-        builder.display("signs_same_imag", signs_same);
+        let signs_same = builder.unconstrained_eq(a.imag_sign, signed_b.imag_sign);
+        // builder.display("signs_same_imag", signs_same);
         // Same signs path: just add and keep sign
-        let sum = builder.add(a.imag, b.imag);
-        builder.display("sum_imag", sum);
+        let sum = builder.add(a.imag, signed_b.imag);
+        //builder.display("sum_imag", sum);
         let same_signs_result = (sum, a.imag_sign);
 
         // Different signs path: subtract and check if result > 2^31
         let max_val = builder.constant(C::CircuitField::from(1u32 << 31));
-        let diff = builder.sub(a.imag, b.imag);
-        builder.display("diff_imag", diff);
+        let diff = builder.sub(a.imag, signed_b.imag);
+        // builder.display("diff_imag", diff);
         let is_large = builder.unconstrained_lesser(max_val, diff);
-        builder.display("is_large_imag", is_large);
+        // builder.display("is_large_imag", is_large);
         let should_negate = builder.unconstrained_eq(is_large, one);
-        builder.display("should_negate_imag", should_negate);
+        // builder.display("should_negate_imag", should_negate);
         let one_minus_should = builder.unconstrained_not_eq(should_negate, one);
-        builder.display("one_minus_should_imag", one_minus_should);
+        // builder.display("one_minus_should_imag", one_minus_should);
         // Compute magnitude
         let neg_result = builder.neg(diff);
-        builder.display("neg_result_imag", neg_result);
+        // builder.display("neg_result_imag", neg_result);
         let pos_term = builder.mul(diff, one_minus_should);
-        builder.display("pos_term_imag", pos_term);
+        // builder.display("pos_term_imag", pos_term);
         let neg_term = builder.mul(neg_result, should_negate);
-        builder.display("neg_term_imag", neg_term);
+        // builder.display("neg_term_imag", neg_term);
         let result = builder.add(pos_term, neg_term);
-        builder.display("result_imag", result);
+        // builder.display("result_imag", result);
         // Sign should be b's sign when |a| < |b| and a's sign when |a| > |b|
-        let sign = builder.unconstrained_eq(is_large, b.imag_sign);
-        builder.display("sign_imag", sign);
+        let sign = builder.unconstrained_eq(is_large, signed_b.imag_sign);
+        // builder.display("sign_imag", sign);
         let diff_signs_result = (result, sign);
         // Select between same signs and different signs paths
         let one_minus_signs_same = builder.sub(one, signs_same);
-        builder.display("one_minus_signs_same_imag", one_minus_signs_same);
+        // builder.display("one_minus_signs_same_imag", one_minus_signs_same);
         let diff_term = builder.mul(diff_signs_result.0, one_minus_signs_same);
-        builder.display("diff_term_imag", diff_term);
+        // builder.display("diff_term_imag", diff_term);
         let final_mag = builder.mul(same_signs_result.0, signs_same);
-        builder.display("final_mag_imag", final_mag);
+        // builder.display("final_mag_imag", final_mag);
         let final_mag = builder.add(final_mag, diff_term);
-        builder.display("final_mag_imag", final_mag);
+        // builder.display("final_mag_imag", final_mag);
         let sign_term = builder.mul(diff_signs_result.1, one_minus_signs_same);
-        builder.display("sign_term_imag", sign_term);
+        // builder.display("sign_term_imag", sign_term);
         let final_sign = builder.mul(same_signs_result.1, signs_same);
-        builder.display("final_sign_imag", final_sign);
+        // builder.display("final_sign_imag", final_sign);
         let final_sign = builder.add(final_sign, sign_term);
-        builder.display("final_sign_imag", final_sign);
+        // builder.display("final_sign_imag", final_sign);
         (final_mag, final_sign)
     };
-
-    ComplexVar::new(real.0, imag.0, real.1, imag.1)
-}
-
-fn complex_sub<C: Config, Builder: RootAPI<C>>(
-    builder: &mut Builder,
-    a: &ComplexVar,
-    b: &ComplexVar,
-) -> ComplexVar {
-    let one = builder.constant(C::CircuitField::from(1u32));
-    let zero = builder.constant(C::CircuitField::ZERO);
-
-    // Helper closure for subtracting individual components
-    let mut sub_components =
-        |a_mag: Variable, a_sign: Variable, b_mag: Variable, b_sign: Variable| {
-            // Check if signs are same
-            let signs_same = builder.unconstrained_eq(a_sign, b_sign);
-
-            // For same signs:
-            // Compare magnitudes
-            let a_geq_b = builder.unconstrained_greater_eq(a_mag, b_mag);
-
-            // If a >= b: result = a - b, keep a's sign
-            let same_signs_diff = builder.sub(a_mag, b_mag);
-            let same_signs_result = (same_signs_diff, a_sign);
-
-            // If a < b: result = b - a, flip a's sign
-            let flipped_diff = builder.sub(b_mag, a_mag);
-            let flipped_result = (flipped_diff, builder.unconstrained_not_eq(one, a_sign));
-
-            // Select between a >= b and a < b paths
-            let same_signs_term = builder.mul(same_signs_result.0, a_geq_b);
-            let one_minus_a_geq_b = builder.sub(one, a_geq_b);
-            let flipped_term = builder.mul(flipped_result.0, one_minus_a_geq_b);
-            let final_mag_same = builder.add(same_signs_term, flipped_term);
-
-            let sign_term_same = builder.mul(same_signs_result.1, a_geq_b);
-            let one_minus_a_geq_b = builder.sub(one, a_geq_b);
-            let sign_flipped_term = builder.mul(flipped_result.1, one_minus_a_geq_b);
-            let final_sign_same = builder.add(sign_term_same, sign_flipped_term);
-
-            // For different signs:
-            // Just add magnitudes and keep a's sign
-            let diff_signs_result = (builder.add(a_mag, b_mag), a_sign);
-
-            // Select between same signs and different signs paths
-            let one_minus_signs_same = builder.sub(one, signs_same);
-            let diff_term = builder.mul(diff_signs_result.0, one_minus_signs_same);
-            let final_mag = builder.mul(final_mag_same, signs_same);
-            let final_mag = builder.add(final_mag, diff_term);
-
-            let sign_term = builder.mul(diff_signs_result.1, one_minus_signs_same);
-            let final_sign = builder.mul(final_sign_same, signs_same);
-            let final_sign = builder.add(final_sign, sign_term);
-
-            (final_mag, final_sign)
-        };
-
-    // Subtract real and imaginary parts separately
-    let real = sub_components(a.real, a.real_sign, b.real, b.real_sign);
-    let imag = sub_components(a.imag, a.imag_sign, b.imag, b.imag_sign);
 
     ComplexVar::new(real.0, imag.0, real.1, imag.1)
 }
@@ -253,14 +195,14 @@ fn complex_mul<C: Config, Builder: RootAPI<C>>(
     // Real part: ac - bd
     let real = {
         // Create ComplexVar for ac term
-        builder.display("a.real_sign", a.real_sign);
-        builder.display("b.real_sign", b.real_sign);
-        builder.display("a.imag_sign", a.imag_sign);
-        builder.display("b.imag_sign", b.imag_sign);
-        builder.display("ac_scaled", ac_scaled);
-        builder.display("bd_scaled", bd_scaled);
+        // builder.display("a.real_sign", a.real_sign);
+        // builder.display("b.real_sign", b.real_sign);
+        // builder.display("a.imag_sign", a.imag_sign);
+        // builder.display("b.imag_sign", b.imag_sign);
+        // builder.display("ac_scaled", ac_scaled);
+        // builder.display("bd_scaled", bd_scaled);
         let ac_sign = builder.unconstrained_not_eq(a.real_sign, b.real_sign);
-        builder.display("ac_sign", ac_sign);
+        // builder.display("ac_sign", ac_sign);
         let ac_term = ComplexVar {
             real: ac_scaled,
             imag: builder.constant(C::CircuitField::ZERO),
@@ -275,9 +217,9 @@ fn complex_mul<C: Config, Builder: RootAPI<C>>(
         // Create ComplexVar for -bd term (note the negation via sign flip)
         let zero = builder.constant(C::CircuitField::ZERO);
         let mul_bd_sign = builder.unconstrained_not_eq(a.imag_sign, b.imag_sign); // flip sign because of addition
-        builder.display("bd_xor_sign", mul_bd_sign);
+                                                                                  // builder.display("bd_xor_sign", mul_bd_sign);
         let bd_sign = builder.unconstrained_not_eq(mul_bd_sign, one_const);
-        builder.display("bd_sign", bd_sign);
+        // builder.display("bd_sign", bd_sign);
 
         let bd_term = ComplexVar {
             real: bd_scaled,
@@ -287,24 +229,24 @@ fn complex_mul<C: Config, Builder: RootAPI<C>>(
         };
 
         // Use complex_add to compute ac + (-bd)
-        let result = complex_add(builder, &ac_term, &bd_term);
-        builder.display("result.real", result.real);
-        builder.display("result.real_sign", result.real_sign);
+        let result = complex_add(builder, &ac_term, &bd_term, false);
+        // builder.display("result.real", result.real);
+        // builder.display("result.real_sign", result.real_sign);
         (result.real, result.real_sign)
     };
 
     // Imaginary part: ad + bc
     let imag = {
-        builder.display("a.real_sign", a.real_sign);
-        builder.display("b.imag_sign", b.imag_sign);
-        builder.display("a.imag_sign", a.imag_sign);
-        builder.display("b.real_sign", b.real_sign);
-        builder.display("ad_scaled", ad_scaled);
-        builder.display("bc_scaled", bc_scaled);
+        // builder.display("a.real_sign", a.real_sign);
+        // builder.display("b.imag_sign", b.imag_sign);
+        // builder.display("a.imag_sign", a.imag_sign);
+        // builder.display("b.real_sign", b.real_sign);
+        // builder.display("ad_scaled", ad_scaled);
+        // builder.display("bc_scaled", bc_scaled);
 
         // Create ComplexVar for ad term
         let ad_sign = builder.unconstrained_not_eq(a.real_sign, b.imag_sign);
-        builder.display("ad_sign", ad_sign);
+        // builder.display("ad_sign", ad_sign);
         let ad_term = ComplexVar {
             real: ad_scaled,
             imag: builder.constant(C::CircuitField::ZERO),
@@ -314,7 +256,7 @@ fn complex_mul<C: Config, Builder: RootAPI<C>>(
 
         // Create ComplexVar for bc term
         let bc_sign = builder.unconstrained_not_eq(a.imag_sign, b.real_sign);
-        builder.display("bc_sign", bc_sign);
+        // builder.display("bc_sign", bc_sign);
         let bc_term = ComplexVar {
             real: bc_scaled,
             imag: builder.constant(C::CircuitField::ZERO),
@@ -323,9 +265,9 @@ fn complex_mul<C: Config, Builder: RootAPI<C>>(
         };
 
         // Use complex_add to compute ad + bc
-        let result = complex_add(builder, &ad_term, &bc_term);
-        builder.display("result.real", result.real);
-        builder.display("result.real_sign", result.real_sign);
+        let result = complex_add(builder, &ad_term, &bc_term, false);
+        // builder.display("result.real", result.real);
+        // builder.display("result.real_sign", result.real_sign);
         (result.real, result.real_sign)
     };
 
@@ -399,6 +341,7 @@ fn verify_fft_internal<C: Config, Builder: RootAPI<C>>(
     level: usize,
 ) -> Variable {
     let size: usize = shape.iter().product::<u64>() as usize;
+    println!("size: {}", size);
     // assert_eq!(
     //     input.len(),
     //     size * 2,
@@ -439,7 +382,7 @@ fn verify_fft_internal<C: Config, Builder: RootAPI<C>>(
         builder.display("output_c.real_sign", output_c.real_sign);
         builder.display("output_c.imag_sign", output_c.imag_sign);
         // Compare difference with threshold
-        let diff = complex_sub(builder, &output_c, &input_c);
+        let diff = complex_add(builder, &output_c, &input_c, true);
         let threshold = builder.constant(C::CircuitField::from(256)); // 0.00390625 * 2^16
 
         let real_check = builder.unconstrained_lesser(diff.real, threshold);
@@ -469,9 +412,17 @@ fn verify_fft_internal<C: Config, Builder: RootAPI<C>>(
         even_signs.extend_from_slice(&input_signs[4 * i..4 * i + 2]);
         odd_signs.extend_from_slice(&input_signs[4 * i + 2..4 * i + 4]);
     }
-
+    let base_random_r = builder.constant(C::CircuitField::random_unsafe(&mut rand::thread_rng())); //builder.get_random_value(); //builder.constant(C::CircuitField::from(24366u32));
+    let cutoff_prime = builder.constant(C::CircuitField::from(CUTOFF_PRIME));
+    let random_r = builder.unconstrained_mod(base_random_r, cutoff_prime);
+    builder.display("random_r", random_r);
     // Get random value for linear combination
-    let r = ComplexVar::from_arrays_convert(builder, roots, root_signs, level);
+    let r = ComplexVar::new(
+        random_r,
+        builder.constant(C::CircuitField::ZERO),
+        builder.constant(C::CircuitField::from(0u32)),
+        builder.constant(C::CircuitField::from(0u32)),
+    );
 
     // Compute linear combination of even and odd parts
     let mut rlc_even_odd = Vec::with_capacity(half_size * 2);
@@ -485,13 +436,12 @@ fn verify_fft_internal<C: Config, Builder: RootAPI<C>>(
         let r_odd = complex_mul(builder, &r, &odd_c, one);
 
         // even[i] + r * odd[i]
-        let combined = complex_add(builder, &even_c, &r_odd);
+        let combined = complex_add(builder, &even_c, &r_odd, false);
 
         rlc_even_odd.extend_from_slice(&[combined.real, combined.imag]);
         let zero = builder.constant(C::CircuitField::ZERO);
-        let one = builder.constant(C::CircuitField::from(1u32));
-        let real_sign = builder.unconstrained_lesser(zero, combined.real_sign);
-        let imag_sign = builder.unconstrained_lesser(zero, combined.imag_sign);
+        let real_sign = combined.real_sign; //builder.unconstrained_lesser(zero, combined.real_sign);
+        let imag_sign = combined.imag_sign; //builder.unconstrained_lesser(zero, combined.imag_sign);
         rlc_signs.extend_from_slice(&[real_sign, imag_sign]);
     }
 
@@ -503,12 +453,14 @@ fn verify_fft_internal<C: Config, Builder: RootAPI<C>>(
         let out_1 = ComplexVar::from_arrays_convert(builder, output, output_signs, i);
         let out_2 = ComplexVar::from_arrays_convert(builder, output, output_signs, i + half_size);
 
-        let diff = complex_sub(builder, &out_1, &out_2);
+        let diff = complex_add(builder, &out_1, &out_2, true);
         odd_fft.extend_from_slice(&[diff.real, diff.imag]);
-        let zero = builder.constant(C::CircuitField::ZERO);
-        let one = builder.constant(C::CircuitField::from(1u32));
-        let real_sign = builder.unconstrained_lesser(zero, diff.real_sign);
-        let imag_sign = builder.unconstrained_lesser(zero, diff.imag_sign);
+        let real_sign = diff.real_sign; //builder.unconstrained_lesser(zero, diff.real_sign);
+        let imag_sign = diff.imag_sign; //builder.unconstrained_lesser(zero, diff.imag_sign);
+        builder.display("diff.real", diff.real);
+        builder.display("diff.imag", diff.imag);
+        builder.display("diff.real_sign", diff.real_sign);
+        builder.display("diff.imag_sign", diff.imag_sign);
         odd_fft_signs.extend_from_slice(&[real_sign, imag_sign]);
     }
 
@@ -519,8 +471,7 @@ fn verify_fft_internal<C: Config, Builder: RootAPI<C>>(
     for i in 0..half_size {
         let odd_c = ComplexVar::from_arrays_convert(builder, &odd_fft, &odd_fft_signs, i);
         let root_signs_var = root_signs;
-        let twiddle =
-            ComplexVar::from_arrays_convert(builder, roots, &root_signs_var, level + 1 + i);
+        let twiddle = ComplexVar::from_arrays_convert(builder, roots, &root_signs_var, level + i);
 
         // First multiply by twiddle
         let twiddled = complex_mul(builder, &odd_c, &twiddle, one);
@@ -529,17 +480,19 @@ fn verify_fft_internal<C: Config, Builder: RootAPI<C>>(
         let half_c = ComplexVar::new(
             half,
             builder.constant(C::CircuitField::ZERO),
-            builder.constant(C::CircuitField::from(1u32)),
-            builder.constant(C::CircuitField::from(1u32)),
+            builder.constant(C::CircuitField::from(0u32)),
+            builder.constant(C::CircuitField::from(0u32)),
         );
         let scaled = complex_mul(builder, &twiddled, &half_c, one);
 
         scaled_odd_fft.extend_from_slice(&[scaled.real, scaled.imag]);
-        let zero = builder.constant(C::CircuitField::ZERO);
-        let one = builder.constant(C::CircuitField::from(1u32));
-        let real_sign = builder.unconstrained_lesser(zero, scaled.real_sign);
-        let imag_sign = builder.unconstrained_lesser(zero, scaled.imag_sign);
+        let real_sign = scaled.real_sign; //builder.unconstrained_lesser(zero, scaled.real_sign);
+        let imag_sign = scaled.imag_sign; //builder.unconstrained_lesser(zero, scaled.imag_sign);
         scaled_odd_signs.extend_from_slice(&[real_sign, imag_sign]);
+        builder.display("scaled.real", scaled.real);
+        builder.display("scaled.imag", scaled.imag);
+        builder.display("scaled.real_sign", scaled.real_sign);
+        builder.display("scaled.imag_sign", scaled.imag_sign);
     }
 
     // Extract and scale even component
@@ -550,22 +503,20 @@ fn verify_fft_internal<C: Config, Builder: RootAPI<C>>(
         let out_1 = ComplexVar::from_arrays_convert(builder, output, output_signs, i);
         let out_2 = ComplexVar::from_arrays_convert(builder, output, output_signs, i + half_size);
 
-        let sum = complex_add(builder, &out_1, &out_2);
+        let sum = complex_add(builder, &out_1, &out_2, false);
 
         // Scale by HALF
         let half_c = ComplexVar::new(
             half,
             builder.constant(C::CircuitField::ZERO),
-            builder.constant(C::CircuitField::from(1u32)),
-            builder.constant(C::CircuitField::from(1u32)),
+            builder.constant(C::CircuitField::from(0u32)),
+            builder.constant(C::CircuitField::from(0u32)),
         );
         let scaled = complex_mul(builder, &sum, &half_c, one);
 
         even_fft.extend_from_slice(&[scaled.real, scaled.imag]);
-        let zero = builder.constant(C::CircuitField::ZERO);
-        let one = builder.constant(C::CircuitField::from(1u32));
-        let real_sign = builder.unconstrained_lesser(zero, scaled.real_sign);
-        let imag_sign = builder.unconstrained_lesser(zero, scaled.imag_sign);
+        let real_sign = scaled.real_sign; //builder.unconstrained_lesser(zero, scaled.real_sign);
+        let imag_sign = scaled.imag_sign; //builder.unconstrained_lesser(zero, scaled.imag_sign);
         even_fft_signs.extend_from_slice(&[real_sign, imag_sign]);
     }
 
@@ -581,16 +532,24 @@ fn verify_fft_internal<C: Config, Builder: RootAPI<C>>(
         let r_odd = complex_mul(builder, &r, &odd_c, one);
 
         // even_fft[i] + r * odd_fft[i]
-        let result = complex_add(builder, &even_c, &r_odd);
+        let result = complex_add(builder, &even_c, &r_odd, false);
 
         combined.extend_from_slice(&[result.real, result.imag]);
         let zero = builder.constant(C::CircuitField::ZERO);
-        let one = builder.constant(C::CircuitField::from(1u32));
-        let real_sign = builder.unconstrained_lesser(zero, result.real_sign);
-        let imag_sign = builder.unconstrained_lesser(zero, result.imag_sign);
+        let real_sign = result.real_sign; //builder.unconstrained_lesser(zero, result.real_sign);
+        let imag_sign = result.imag_sign; //builder.unconstrained_lesser(zero, result.imag_sign);
         combined_signs.extend_from_slice(&[real_sign, imag_sign]);
     }
-
+    for i in 0..half_size {
+        builder.display("rlc_even_odd[i]", rlc_even_odd[i]);
+        builder.display("combined[i]", combined[i]);
+        builder.display("even_fft[i]", even_fft[i]);
+        builder.display("odd_fft[i]", scaled_odd_fft[i]);
+        builder.display("rlc_signs[i]", rlc_signs[i]);
+        builder.display("combined_signs[i]", combined_signs[i]);
+        builder.display("odd_fft_signs[i]", scaled_odd_signs[i]);
+        builder.display("even_fft_signs[i]", even_fft_signs[i]);
+    }
     // Keep signs as Variables for recursive verification
     verify_fft_internal(
         builder,
@@ -608,7 +567,9 @@ fn verify_fft_internal<C: Config, Builder: RootAPI<C>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arith::{BN254Fr, Field};
     use expander_compiler::field::BN254;
+    use expander_compiler::frontend::extra::*;
     use expander_compiler::frontend::BN254Config;
 
     const ONE: u32 = 1 << 16;
@@ -618,24 +579,6 @@ mod tests {
         output: [Variable],
         roots: [Variable],
     });
-
-    // impl DumpLoadTwoVariables<BN254Fr> for TestCircuit<BN254Fr> {
-    //     fn dump_into(&self, vars: &mut Vec<BN254Fr>, public_vars: &mut Vec<BN254Fr>) {
-    //         vars.extend_from_slice(&self.input);
-    //         public_vars.extend_from_slice(&self.output);
-    //     }
-
-    //     fn load_from(&mut self, vars: &mut &[BN254Fr], public_vars: &mut &[BN254Fr]) {
-    //         self.input.copy_from_slice(&vars[..2]);
-    //         *vars = &vars[2..];
-    //         self.output.copy_from_slice(&public_vars[..2]);
-    //         *public_vars = &public_vars[2..];
-    //     }
-
-    //     fn num_vars(&self) -> (usize, usize) {
-    //         (2, 2)
-    //     }
-    // }
 
     #[test]
     fn test_verify_fft_size_1() {
@@ -647,9 +590,9 @@ mod tests {
 
         impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
             fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
-                let input_signs = vec![true, true]; // Signs for real,imag parts
-                let output_signs = vec![true, true];
-                let root_signs = vec![true, true]; // Signs for complex root
+                let input_signs = vec![false, false]; // Signs for real,imag parts
+                let output_signs = vec![false, false];
+                let root_signs = vec![false, false]; // Signs for complex root
 
                 let result = verify_fft(
                     builder,
@@ -704,7 +647,79 @@ mod tests {
         debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
         assert_eq!(output, vec![true]);
     }
+    #[test]
+    fn test_verify_fft_size_2() {
+        declare_circuit!(TestCircuit {
+            input: [Variable],
+            output: [Variable],
+            roots: [Variable],
+        });
 
+        impl<C: Config> GenericDefine<C> for TestCircuit<Variable> {
+            fn define<Builder: RootAPI<C>>(&self, builder: &mut Builder) {
+                let input_signs = vec![false, false, false, false]; // Signs for real,imag parts
+                let output_signs = vec![false, false, false, false];
+                let root_signs = vec![false, false, true, false]; // Signs for complex roots (need 2 roots for size 2 FFT)
+
+                let result = verify_fft(
+                    builder,
+                    &self.input,
+                    &self.output,
+                    &input_signs,
+                    &output_signs,
+                    &self.roots,
+                    &root_signs,
+                    &[2], // Size 2 FFT
+                    0,
+                );
+
+                let true_const = builder.constant(C::CircuitField::from(1u32));
+                builder.assert_is_equal(result, true_const);
+            }
+        }
+
+        let circuit = TestCircuit {
+            input: vec![Variable::default(); 4],  // 2 complex numbers
+            output: vec![Variable::default(); 4], // 2 complex numbers
+            roots: vec![Variable::default(); 4],  // 2 complex roots (root and twiddle factor)
+        };
+
+        let compile_result = compile_generic::<BN254Config, TestCircuit<Variable>>(
+            &circuit,
+            CompileOptions::default(),
+        )
+        .unwrap();
+
+        // Test with input = [1,0, 1,0], output = [2,0, 0,0], roots = [1,0, -1,0]
+        let assignment = TestCircuit::<BN254> {
+            input: vec![
+                BN254::from(ONE), // First complex number (1 + 0i)
+                BN254::from(0u32),
+                BN254::from(ONE), // Second complex number (1 + 0i)
+                BN254::from(0u32),
+            ],
+            output: vec![
+                BN254::from(2 * ONE as u32), // First output (2 + 0i)
+                BN254::from(0u32),
+                BN254::from(0u32), // Second output (0 + 0i)
+                BN254::from(0u32),
+            ],
+            roots: vec![
+                BN254::from(ONE), // Root of unity (1 + 0i)
+                BN254::from(0u32),
+                BN254::from(ONE), // Twiddle factor (-1 + 0i)
+                BN254::from(0u32),
+            ],
+        };
+
+        let witness = compile_result
+            .witness_solver
+            .solve_witness(&assignment)
+            .unwrap();
+        let output = compile_result.layered_circuit.run(&witness);
+        debug_eval::<BN254Config, _, _, _>(&circuit, &assignment, EmptyHintCaller);
+        assert_eq!(output, vec![true]);
+    }
     #[test]
     fn test_complex_add_positive() {
         declare_circuit!(TestCircuit {
@@ -726,7 +741,7 @@ mod tests {
                     builder.constant(C::CircuitField::from(0u32)),
                     builder.constant(C::CircuitField::from(0u32)),
                 );
-                let result = complex_add(builder, &a, &b);
+                let result = complex_add(builder, &a, &b, false);
                 let zero = builder.constant(C::CircuitField::ZERO);
                 builder.assert_is_equal(result.real, self.output[0]);
                 builder.assert_is_equal(result.imag, self.output[1]);
@@ -788,7 +803,7 @@ mod tests {
                     builder.constant(C::CircuitField::from(1u32)),
                     builder.constant(C::CircuitField::from(1u32)),
                 ); // -2 + 0i
-                let result = complex_add(builder, &a, &b);
+                let result = complex_add(builder, &a, &b, false);
                 let one = builder.constant(C::CircuitField::from(1u32));
 
                 builder.display("result.real", result.real);
@@ -858,8 +873,7 @@ mod tests {
                     builder.constant(C::CircuitField::from(0u32)),
                     builder.constant(C::CircuitField::from(0u32)),
                 ); // -2 + 0i
-                let result = complex_add(builder, &a, &b);
-                let one = builder.constant(C::CircuitField::from(1u32));
+                let result = complex_add(builder, &a, &b, false);
                 let zero = builder.constant(C::CircuitField::ZERO);
                 builder.display("result.real", result.real);
                 builder.display("result.imag", result.imag);
@@ -928,7 +942,7 @@ mod tests {
                     builder.constant(C::CircuitField::from(1u32)),
                     builder.constant(C::CircuitField::from(1u32)),
                 ); // -2 + 0i
-                let result = complex_add(builder, &a, &b);
+                let result = complex_add(builder, &a, &b, false);
                 let zero = builder.constant(C::CircuitField::ZERO);
                 let one = builder.constant(C::CircuitField::from(1u32));
 
@@ -1000,7 +1014,7 @@ mod tests {
                     builder.constant(C::CircuitField::from(1u32)),
                     builder.constant(C::CircuitField::from(0u32)),
                 ); // -1 + 0i
-                let result = complex_add(builder, &a, &b);
+                let result = complex_add(builder, &a, &b, false);
                 let zero = builder.constant(C::CircuitField::ZERO);
                 let one = builder.constant(C::CircuitField::from(1u32));
                 builder.assert_is_equal(result.real, self.output[0]);
@@ -1060,10 +1074,10 @@ mod tests {
                 let b = ComplexVar::new(
                     self.input[2],
                     self.input[3],
-                    builder.constant(C::CircuitField::from(1u32)), // inverse sign because we are using the add ops instead of sub ops
-                    builder.constant(C::CircuitField::from(1u32)),
+                    builder.constant(C::CircuitField::from(0u32)), // inverse sign because we are using the add ops instead of sub ops
+                    builder.constant(C::CircuitField::from(0u32)),
                 ); // 1 + 2i
-                let result = complex_add(builder, &a, &b);
+                let result = complex_add(builder, &a, &b, true);
                 let zero = builder.constant(C::CircuitField::ZERO);
 
                 builder.display("result.real", result.real);
@@ -1129,10 +1143,10 @@ mod tests {
                 let b = ComplexVar::new(
                     self.input[2],
                     self.input[3],
-                    builder.constant(C::CircuitField::from(0u32)), // inverse sign because we are using the add ops instead of sub ops
-                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(1u32)),
+                    builder.constant(C::CircuitField::from(1u32)),
                 ); // -2 - 2i
-                let result = complex_add(builder, &a, &b);
+                let result = complex_add(builder, &a, &b, true);
                 let zero = builder.constant(C::CircuitField::ZERO);
 
                 builder.display("result.real", result.real);
@@ -1198,10 +1212,10 @@ mod tests {
                 let b = ComplexVar::new(
                     self.input[2],
                     self.input[3],
-                    builder.constant(C::CircuitField::from(0u32)), // inverse sign because we are using the add ops instead of sub ops
-                    builder.constant(C::CircuitField::from(0u32)),
+                    builder.constant(C::CircuitField::from(1u32)),
+                    builder.constant(C::CircuitField::from(1u32)),
                 ); // -1 - 2i
-                let result = complex_add(builder, &a, &b);
+                let result = complex_add(builder, &a, &b, true);
                 let zero = builder.constant(C::CircuitField::ZERO);
 
                 builder.display("result.real", result.real);
@@ -1344,7 +1358,6 @@ mod tests {
                 let one = builder.constant(C::CircuitField::from(ONE));
                 let result = complex_mul(builder, &a, &b, one);
                 let zero = builder.constant(C::CircuitField::ZERO);
-                let one_const = builder.constant(C::CircuitField::from(1u32));
 
                 builder.display("result.real", result.real);
                 builder.display("result.imag", result.imag);
